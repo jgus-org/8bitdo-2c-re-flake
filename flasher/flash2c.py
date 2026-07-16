@@ -9,6 +9,7 @@ Data blocks in both protocols carry a CRC-16/MODBUS. The app's per-sector addres
 """
 import argparse
 import sys
+import time
 
 import usb.core
 import usb.util
@@ -257,6 +258,7 @@ def _device_kind(dev, t, debug=False):
     """Classify by reading flash 0x10000 (blank=dongle, code=ctrl). Wakes the app session first + retries — a cold controller ignores IAP reads until the 0x00/0xc1 handshake. Returns (kind|None, session-ACKed)."""
     woke = _wake_app(dev, t, debug=debug)
     for _ in range(8):
+        time.sleep(0.02)  # a controller needs a beat after the session opens before its IAP serves reads
         probe = _read1(dev, t, 0x10000, 16, debug=debug)
         if probe is not None:
             return ("dongle" if all(b == 0xff for b in probe) else "ctrl"), woke

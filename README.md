@@ -9,7 +9,7 @@ Reverse-engineering workbench and flasher for the 8BitDo Ultimate 2C wireless co
 ## Quick start
 
 ```bash
-cd flakes/8bitdo-2c-re
+git clone https://github.com/jgus/8bitdo-2c-re-flake && cd 8bitdo-2c-re-flake
 nix develop            # or: direnv allow
 ```
 

@@ -1,0 +1,10 @@
+.direnv/
+result
+result-*
+# Ghidra projects and working files
+*.gpr
+*.rep/
+.ghidra/
+projects/
+# Ad-hoc firmware pulled by refetch-firmware
+firmware-type*.dat

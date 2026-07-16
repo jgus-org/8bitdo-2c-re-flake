@@ -234,29 +234,33 @@ def _payload_kind(payload):
     return next((k for k, (lo, hi) in APP_KINDS.items() if lo <= n <= hi), None)
 
 
-def _wake_app(dev, t, retries=6):
+def _wake_app(dev, t, retries=10, debug=False):
     """Open the app IAP session (0x00 + 0xc1) until it ACKs. The controller's read/write path stays inert until this handshake — the dongle answers cold, the controller does not. Non-destructive: the same session ping as `probe`, no erase/write."""
-    for _ in range(retries):
+    for i in range(retries):
         try:
             dev.write(t["ep_out"], bytes(_r00()), 800)
             resp = bytes(dev.read(t["ep_in"], 64, 800))
             dev.write(t["ep_out"], bytes(_rc1()), 800)
             dev.read(t["ep_in"], 64, 800)
-        except usb.core.USBError:
+        except usb.core.USBError as e:
+            if debug:
+                print(f"    wake[{i}]: {e}", file=sys.stderr)
             continue
+        if debug:
+            print(f"    wake[{i}]: resp {resp[:4].hex()}", file=sys.stderr)
         if resp[0:2] in (b"\x02\x05", b"\x02\x22"):
             return True
     return False
 
 
-def _device_kind(dev, t):
-    """Classify by reading flash 0x10000 (blank=dongle, code=ctrl); None if unreadable. Wakes the app session first + retries — a cold controller ignores IAP reads until the 0x00/0xc1 handshake."""
-    _wake_app(dev, t)
-    for _ in range(4):
-        probe = _read1(dev, t, 0x10000, 16)
+def _device_kind(dev, t, debug=False):
+    """Classify by reading flash 0x10000 (blank=dongle, code=ctrl). Wakes the app session first + retries — a cold controller ignores IAP reads until the 0x00/0xc1 handshake. Returns (kind|None, session-ACKed)."""
+    woke = _wake_app(dev, t, debug=debug)
+    for _ in range(8):
+        probe = _read1(dev, t, 0x10000, 16, debug=debug)
         if probe is not None:
-            return "dongle" if all(b == 0xff for b in probe) else "ctrl"
-    return None
+            return ("dongle" if all(b == 0xff for b in probe) else "ctrl"), woke
+    return None, woke
 
 
 def cmd_flash(args):
@@ -264,7 +268,7 @@ def cmd_flash(args):
     dev, t = open_target(args.target, args.dev)
     pk = _payload_kind(payload)
     if pk and not args.force:  # 0x310a is a wired controller OR a dongle relaying one — confirm against the device's own flash
-        dk = _device_kind(dev, t)
+        dk, _ = _device_kind(dev, t)
         if dk and dk != pk:
             raise SystemExit(f"REFUSING: {pk} firmware into a {dk} device. Re-check the target (0x310a can be a dongle), or pass --force.")
         if dk is None:
@@ -367,12 +371,12 @@ def _update_one(sel, pid, payloads, args):
         return f"SKIP: unhandled PID {pid:#06x}"
     dev, t = open_target("dongle" if pid == 0x301c else "ctrl", sel)
     try:
-        dk = _device_kind(dev, t)
+        dk, woke = _device_kind(dev, t, args.debug)
         if pid == 0x310a:
             if dk == "dongle":
                 return "SKIP: dongle relaying a controller — idle it (unplug the pad) to flash the dongle"
             if dk != "ctrl":
-                return "SKIP: 0x310a but 0x10000 unreadable — cannot confirm a wired controller"
+                return f"SKIP: 0x310a but 0x10000 unreadable (session {'ACKed' if woke else 'no ACK'}) — cannot confirm a wired controller"
             kind = "ctrl"
         else:
             kind = "dongle"
@@ -463,6 +467,7 @@ def main():
     ua.add_argument("--dongle-payload", required=True)
     ua.add_argument("--dry-run", action="store_true", help="classify and report the plan; flash nothing")
     ua.add_argument("--force", action="store_true", help="re-flash even a device already reading Ultima+e")
+    ua.add_argument("--debug", action="store_true", help="print the raw session-wake + read exchanges per device")
     ua.set_defaults(func=cmd_update_all)
 
     args = ap.parse_args()

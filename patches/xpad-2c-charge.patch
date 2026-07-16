@@ -1,0 +1,160 @@
+--- a/drivers/input/joystick/xpad.c
++++ b/drivers/input/joystick/xpad.c
+@@ -70,6 +70,7 @@
+ #include <linux/module.h>
+ #include <linux/usb/input.h>
+ #include <linux/usb/quirks.h>
++#include <linux/power_supply.h>
+ 
+ #define XPAD_PKT_LEN 64
+ 
+@@ -84,6 +85,7 @@
+ #define MAP_PADDLES			BIT(4)
+ #define MAP_PROFILE_BUTTON		BIT(5)
+ #define MAP_SHARE_OFFSET		BIT(6)
++#define MAP_2C_RELAY		BIT(7)
+ 
+ #define DANCEPAD_MAP_CONFIG	(MAP_DPAD_TO_BUTTONS |			\
+ 				MAP_TRIGGERS_TO_BUTTONS | MAP_STICKS_TO_NULL)
+@@ -408,7 +410,7 @@
+ 	{ 0x2dc8, 0x200f, "8BitDo Ultimate 3-mode Controller for Xbox", MAP_SHARE_BUTTON, XTYPE_XBOXONE },
+ 	{ 0x2dc8, 0x3106, "8BitDo Ultimate Wireless / Pro 2 Wired Controller", 0, XTYPE_XBOX360 },
+ 	{ 0x2dc8, 0x3109, "8BitDo Ultimate Wireless Bluetooth", 0, XTYPE_XBOX360 },
+-	{ 0x2dc8, 0x310a, "8BitDo Ultimate 2C Wireless Controller", 0, XTYPE_XBOX360 },
++	{ 0x2dc8, 0x310a, "8BitDo Ultimate 2C Wireless Controller", MAP_2C_RELAY, XTYPE_XBOX360 },
+ 	{ 0x2dc8, 0x310b, "8BitDo Ultimate 2 Wireless Controller", 0, XTYPE_XBOX360 },
+ 	{ 0x2dc8, 0x6001, "8BitDo SN30 Pro", 0, XTYPE_XBOX360 },
+ 	{ 0x2e24, 0x0423, "Hyperkin DuchesS Xbox One pad", MAP_SHARE_BUTTON, XTYPE_XBOXONE },
+@@ -811,6 +813,11 @@
+ 	time64_t mode_btn_down_ts;
+ 	bool delay_init;		/* init packets should be delayed */
+ 	bool delayed_init_done;
++
++	struct power_supply *battery;
++	struct power_supply_desc battery_desc;
++	char battery_name[32];
++	u8 battery_level;		/* latest battery-level report byte */
+ };
+ 
+ static int xpad_init_input(struct usb_xpad *xpad);
+@@ -969,8 +976,17 @@
+ 		input_report_abs(dev, ABS_RZ, data[5]);
+ 	}
+ 
++	if (xpad->mapping & MAP_2C_RELAY) {
++		input_report_key(dev, BTN_GRIPR, data[19] & BIT(1));
++		input_report_key(dev, BTN_GRIPL, data[19] & BIT(2));
++		input_report_key(dev, BTN_TRIGGER_HAPPY1, data[19] & BIT(3));
++	}
++
+ 	input_sync(dev);
+ 
++	if (xpad->mapping & MAP_2C_RELAY)
++		WRITE_ONCE(xpad->battery_level, data[18]);
++
+ 	/* XBOX360W controllers can't be turned off without driver assistance */
+ 	if (xpad->xtype == XTYPE_XBOX360W) {
+ 		if (xpad->mode_btn_down_ts > 0 && xpad->pad_present &&
+@@ -1952,10 +1968,79 @@
+ 	}
+ }
+ 
++static const enum power_supply_property xpad_battery_props[] = {
++	POWER_SUPPLY_PROP_PRESENT,
++	POWER_SUPPLY_PROP_CAPACITY,
++	POWER_SUPPLY_PROP_SCOPE,
++};
++
++static int xpad_battery_get_property(struct power_supply *psy,
++				    enum power_supply_property psp,
++				    union power_supply_propval *val)
++{
++	struct usb_xpad *xpad = power_supply_get_drvdata(psy);
++	u8 status = READ_ONCE(xpad->battery_level);
++
++	switch (psp) {
++	case POWER_SUPPLY_PROP_PRESENT:
++		val->intval = 1;
++		break;
++	case POWER_SUPPLY_PROP_CAPACITY:
++		val->intval = min_t(int, status & 0x7f, 100);
++		break;
++	case POWER_SUPPLY_PROP_SCOPE:
++		val->intval = POWER_SUPPLY_SCOPE_DEVICE;
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++static void xpad_battery_probe(struct usb_xpad *xpad)
++{
++	struct power_supply_desc *desc = &xpad->battery_desc;
++	struct power_supply_config cfg = { .drv_data = xpad };
++	struct power_supply *psy;
++
++	if (!(xpad->mapping & MAP_2C_RELAY))
++		return;
++
++	snprintf(xpad->battery_name, sizeof(xpad->battery_name), "xpad-%s",
++		 dev_name(&xpad->dev->dev));
++
++	desc->name = xpad->battery_name;
++	desc->type = POWER_SUPPLY_TYPE_BATTERY;
++	desc->properties = xpad_battery_props;
++	desc->num_properties = ARRAY_SIZE(xpad_battery_props);
++	desc->get_property = xpad_battery_get_property;
++
++	psy = power_supply_register(&xpad->intf->dev, desc, &cfg);
++	if (IS_ERR(psy)) {
++		dev_warn(&xpad->dev->dev,
++			 "unable to register power supply: %ld\n",
++			 PTR_ERR(psy));
++		xpad->battery = NULL;
++		return;
++	}
++
++	xpad->battery = psy;
++}
++
++static void xpad_battery_disconnect(struct usb_xpad *xpad)
++{
++	if (xpad->battery) {
++		power_supply_unregister(xpad->battery);
++		xpad->battery = NULL;
++	}
++}
++
+ static void xpad_deinit_input(struct usb_xpad *xpad)
+ {
+ 	if (xpad->input_created) {
+ 		xpad->input_created = false;
++		xpad_battery_disconnect(xpad);
+ 		xpad_led_disconnect(xpad);
+ 		input_unregister_device(xpad->dev);
+ 	}
+@@ -2023,6 +2108,13 @@
+ 			input_set_capability(input_dev, EV_KEY, xpad_btn_paddles[i]);
+ 	}
+ 
++	/* 8BitDo 2C L4/R4/Square paddles relayed over 2.4GHz */
++	if (xpad->mapping & MAP_2C_RELAY) {
++		input_set_capability(input_dev, EV_KEY, BTN_GRIPR);
++		input_set_capability(input_dev, EV_KEY, BTN_GRIPL);
++		input_set_capability(input_dev, EV_KEY, BTN_TRIGGER_HAPPY1);
++	}
++
+ 	/*
+ 	 * This should be a simple else block. However historically
+ 	 * xbox360w has mapped DPAD to buttons while xbox360 did not. This
+@@ -2060,6 +2152,8 @@
+ 	if (error)
+ 		goto err_disconnect_led;
+ 
++	xpad_battery_probe(xpad);
++
+ 	xpad->input_created = true;
+ 	return 0;
+ 

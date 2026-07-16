@@ -2,9 +2,19 @@
 
 Reverse-engineering workbench and flasher for the 8BitDo Ultimate 2C wireless controller and its 2.4 GHz USB dongle. Standalone, self-contained flake (own pinned nixpkgs + tools). `nix run github:jgus/8bitdo-2c-re-flake#update-all` flashes every plugged-in pad with the production firmware.
 
-**Status: shipped.** The original goal — charging pads claiming low gamepad slots on k1 ([jgus/tickets#120](https://github.com/jgus/tickets/issues/120)) — is resolved *charger-side*: `machine/k1/charge-dock.nix` unbinds a docked pad's input drivers on the designated charging hub, so it charges but claims no slot (no controller firmware involved). Bonus firmware also landed ([#123](https://github.com/jgus/tickets/issues/123)): unscaled 0-100 battery % + L4/R4/Square over 2.4 GHz via `patches/battery-ctrl.s` (controller) + `patches/batt-l4r4-dongle.s` (dongle) + `machine/k1/xpad-2c-charge.patch` (host); the controller mod also rebrands it **Ultima+e** so a flashed pad is visibly distinct in `lsusb`. Parked / won't-do: live charge-status over 2.4 GHz ([#121](https://github.com/jgus/tickets/issues/121) — VBUS isn't inline-readable), BT force-feedback ([#122](https://github.com/jgus/tickets/issues/122)), SWS rig ([#124](https://github.com/jgus/tickets/issues/124) — the bootloader dumps over USB instead). Follow-ups: tooling cleanup [#138](https://github.com/jgus/tickets/issues/138), fleet rollout [#139](https://github.com/jgus/tickets/issues/139).
+**Status: shipped.** The original goal — charging pads claiming low gamepad slots on k1 ([jgus/tickets#120](https://github.com/jgus/tickets/issues/120)) — is resolved *charger-side*: `machine/k1/charge-dock.nix` unbinds a docked pad's input drivers on the designated charging hub, so it charges but claims no slot (no controller firmware involved). Bonus firmware also landed ([#123](https://github.com/jgus/tickets/issues/123)): unscaled 0-100 battery % + L4/R4/Square over 2.4 GHz via `patches/battery-ctrl.s` (controller) + `patches/batt-l4r4-dongle.s` (dongle) + this flake's `nixosModules.xpad-2c-charge` kernel patch (host); the controller mod also rebrands it **Ultima+e** so a flashed pad is visibly distinct in `lsusb`. Parked / won't-do: live charge-status over 2.4 GHz ([#121](https://github.com/jgus/tickets/issues/121) — VBUS isn't inline-readable), BT force-feedback ([#122](https://github.com/jgus/tickets/issues/122)), SWS rig ([#124](https://github.com/jgus/tickets/issues/124) — the bootloader dumps over USB instead). Follow-ups: tooling cleanup [#138](https://github.com/jgus/tickets/issues/138), fleet rollout [#139](https://github.com/jgus/tickets/issues/139).
 
 **Results so far:** [findings/FINDINGS.md](findings/FINDINGS.md) is the vetted decision-grade synthesis (charging gate, BT/FF, extra buttons, flashing). The analysis pipeline (scripts + `symbolicate.py`) is documented in [NOTES.md](NOTES.md).
+
+## NixOS module
+
+`nixosModules.xpad-2c-charge` applies the host kernel patch (`patches/xpad-2c-charge.patch`) via `boot.kernelPatches` — the driver half that surfaces the FW mods' battery % (`/sys/class/power_supply/xpad-*`) and L4/R4/Square. Consume it:
+
+```nix
+inputs.bitdo-2c-re.url = "github:jgus/8bitdo-2c-re-flake";
+# then in the host's modules:
+imports = [ inputs.bitdo-2c-re.nixosModules.xpad-2c-charge ];
+```
 
 ## Quick start
 

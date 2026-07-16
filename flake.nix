@@ -225,5 +225,14 @@
             echo "  firmware:  nix build .#fw-ctrl-v109   (raw .dat, header intact)"
           '';
         };
-      });
+      })
+      // {
+        # Host side of the FW mods: xpad kernel patch exposing the 2C's battery% + L4/R4/Square over 2.4GHz.
+        nixosModules.xpad-2c-charge = { ... }: {
+          boot.kernelPatches = [{
+            name = "xpad-2c-charge";
+            patch = ./patches/xpad-2c-charge.patch;
+          }];
+        };
+      };
 }

@@ -234,9 +234,29 @@ def _payload_kind(payload):
     return next((k for k, (lo, hi) in APP_KINDS.items() if lo <= n <= hi), None)
 
 
+def _wake_app(dev, t, retries=6):
+    """Open the app IAP session (0x00 + 0xc1) until it ACKs. The controller's read/write path stays inert until this handshake — the dongle answers cold, the controller does not. Non-destructive: the same session ping as `probe`, no erase/write."""
+    for _ in range(retries):
+        try:
+            dev.write(t["ep_out"], bytes(_r00()), 800)
+            resp = bytes(dev.read(t["ep_in"], 64, 800))
+            dev.write(t["ep_out"], bytes(_rc1()), 800)
+            dev.read(t["ep_in"], 64, 800)
+        except usb.core.USBError:
+            continue
+        if resp[0:2] in (b"\x02\x05", b"\x02\x22"):
+            return True
+    return False
+
+
 def _device_kind(dev, t):
-    probe = _read1(dev, t, 0x10000, 16)
-    return None if probe is None else ("dongle" if all(b == 0xff for b in probe) else "ctrl")
+    """Classify by reading flash 0x10000 (blank=dongle, code=ctrl); None if unreadable. Wakes the app session first + retries — a cold controller ignores IAP reads until the 0x00/0xc1 handshake."""
+    _wake_app(dev, t)
+    for _ in range(4):
+        probe = _read1(dev, t, 0x10000, 16)
+        if probe is not None:
+            return "dongle" if all(b == 0xff for b in probe) else "ctrl"
+    return None
 
 
 def cmd_flash(args):

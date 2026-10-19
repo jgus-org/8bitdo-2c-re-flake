@@ -8,3 +8,6 @@ result-*
 projects/
 # Ad-hoc firmware pulled by refetch-firmware
 firmware-type*.dat
+/result
+/result-*
+/pin.nix.new

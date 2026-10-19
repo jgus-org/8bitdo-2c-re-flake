@@ -8,40 +8,77 @@
       url = "github:trust1995/Ghidra_TELink_TC32/f466dac5f746ac65d57dbbf8eb534988e1076f53";
       flake = false;
     };
+    treefmt-nix = {
+      url = "github:numtide/treefmt-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, tc32-ghidra }:
-    flake-utils.lib.eachSystem [ "x86_64-linux" ] (system:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      flake-utils,
+      tc32-ghidra,
+      treefmt-nix,
+    }:
+    flake-utils.lib.eachSystem [ "x86_64-linux" ] (
+      system:
       let
         pkgs = import nixpkgs { inherit system; };
         lib = nixpkgs.lib;
+
+        treefmtEval = treefmt-nix.lib.evalModule pkgs {
+          projectRootFile = "flake.nix";
+          programs.nixfmt.enable = true;
+        };
 
         base = "http://dl.8bitdo.com:8080";
         upload = "${base}/firmwareFile/upload";
 
         # dl.8bitdo.com API types: 75 controller, 76 dongle, 77 wired. Verify downloads by size; the manifest md5 field is unreliable.
         specs = {
-          "ctrl-v109" = { url = "${upload}/3652c29e-7b6c-4521-9426-abf153e7298b.dat"; hash = "sha256-hzSeYDu5LWrp/23vtvMrEN4vLTJS/k5EL6eZP5gvKlo="; };
-          "ctrl-v106" = { url = "${upload}/eeaedee4-deda-481a-aede-63e73a6eb1c0.dat"; hash = "sha256-9/iwKd3yY4mIVr6ES/017lG3sxlWzOha71OGOnwP+M4="; };
-          "dongle-v103" = { url = "${upload}/8c7285c9-e169-4f22-8e3b-928d08599151.dat"; hash = "sha256-5t0lZeIA5kfkeYL0LriOyumdNKseGrIBi0mizl+Rodk="; };
-          "dongle-v100" = { url = "${upload}/4e47d5a0-0776-444c-a9fe-2a3a0a08d5d6.dat"; hash = "sha256-oqH5wjw9kGiAA7po193U/p06rRseRAITKV5DVOcfdW0="; };
+          "ctrl-v109" = {
+            url = "${upload}/3652c29e-7b6c-4521-9426-abf153e7298b.dat";
+            hash = "sha256-hzSeYDu5LWrp/23vtvMrEN4vLTJS/k5EL6eZP5gvKlo=";
+          };
+          "ctrl-v106" = {
+            url = "${upload}/eeaedee4-deda-481a-aede-63e73a6eb1c0.dat";
+            hash = "sha256-9/iwKd3yY4mIVr6ES/017lG3sxlWzOha71OGOnwP+M4=";
+          };
+          "dongle-v103" = {
+            url = "${upload}/8c7285c9-e169-4f22-8e3b-928d08599151.dat";
+            hash = "sha256-5t0lZeIA5kfkeYL0LriOyumdNKseGrIBi0mizl+Rodk=";
+          };
+          "dongle-v100" = {
+            url = "${upload}/4e47d5a0-0776-444c-a9fe-2a3a0a08d5d6.dat";
+            hash = "sha256-oqH5wjw9kGiAA7po193U/p06rRseRAITKV5DVOcfdW0=";
+          };
         };
 
-        firmware = lib.mapAttrs
-          (n: s: pkgs.fetchurl { name = "8bitdo-2c-${n}.dat"; inherit (s) url hash; })
-          specs;
+        firmware = lib.mapAttrs (
+          n: s:
+          pkgs.fetchurl {
+            name = "8bitdo-2c-${n}.dat";
+            inherit (s) url hash;
+          }
+        ) specs;
 
         # ebitdo container = 28-byte header + raw Telink image. Strip to the flashed payload; load base is 0x6000.
-        payloads = lib.mapAttrs
-          (n: fw: pkgs.runCommand "8bitdo-2c-${n}-payload.bin" { } ''tail -c +29 ${fw} > $out'')
-          firmware;
+        payloads = lib.mapAttrs (
+          n: fw: pkgs.runCommand "8bitdo-2c-${n}-payload.bin" { } "tail -c +29 ${fw} > $out"
+        ) firmware;
 
         loadBase = "0x6000"; # img address of payload offset 0
 
         # Assemble a shim .s (sections placed at the img addresses in `place`, firmware `syms` resolved) into one raw .bin per section.
-        mkAsm = { src, syms ? { }, place }: pkgs.runCommand "8bitdo-2c-shim"
-          { nativeBuildInputs = [ tc32-tools ]; }
-          ''
+        mkAsm =
+          {
+            src,
+            syms ? { },
+            place,
+          }:
+          pkgs.runCommand "8bitdo-2c-shim" { nativeBuildInputs = [ tc32-tools ]; } ''
             cat > shim.ld <<'LD'
             ${lib.concatStrings (lib.mapAttrsToList (n: v: "${n} = ${v};\n") syms)}SECTIONS {
             ${lib.concatStrings (lib.mapAttrsToList (sec: p: "  ${sec} ${p.addr} : { *(${sec}) }\n") place)}}
@@ -49,28 +86,53 @@
             tc32-elf-as ${src} -o shim.o
             tc32-elf-ld -T shim.ld shim.o -o shim.elf
             mkdir -p $out
-            ${lib.concatStrings (lib.mapAttrsToList (sec: p: "tc32-elf-objcopy -O binary --only-section=${sec} shim.elf $out/${lib.removePrefix "." sec}.bin\n") place)}
+            ${lib.concatStrings (
+              lib.mapAttrsToList (
+                sec: p:
+                "tc32-elf-objcopy -O binary --only-section=${sec} shim.elf $out/${lib.removePrefix "." sec}.bin\n"
+              ) place
+            )}
           '';
 
         # Modded firmware whose code comes from an assembled shim: each `place` section is written at its img address (apply.py maps it to a file offset via --load-base), asserting the stock bytes in `old`. Extra `patches` (data/string .py) apply after.
-        mkAsmMod = modname: base: { src, syms ? { }, place, patches ? [ ] }:
+        mkAsmMod =
+          modname: base:
+          {
+            src,
+            syms ? { },
+            place,
+            patches ? [ ],
+          }:
           let
             asm = mkAsm { inherit src syms place; };
-            placeArgs = lib.concatStringsSep " " (lib.mapAttrsToList
-              (sec: p: "--place ${p.addr}:${p.old}:${asm}/${lib.removePrefix "." sec}.bin")
-              place);
+            placeArgs = lib.concatStringsSep " " (
+              lib.mapAttrsToList (
+                sec: p: "--place ${p.addr}:${p.old}:${asm}/${lib.removePrefix "." sec}.bin"
+              ) place
+            );
           in
           pkgs.runCommand "8bitdo-2c-${modname}.bin" { nativeBuildInputs = [ pkgs.python3 ]; }
-            ''python3 ${./patches/apply.py} ${base} $out --load-base ${loadBase} ${placeArgs} ${lib.concatStringsSep " " (map (p: "${p}") patches)}'';
+            "python3 ${./patches/apply.py} ${base} $out --load-base ${loadBase} ${placeArgs} ${
+              lib.concatStringsSep " " (map (p: "${p}") patches)
+            }";
 
         mods = {
           # Controller: fold battery 0-100 into the spare button-word bits; rebrand Ultima+e.
           "battery-ctrl-v109" = mkAsmMod "battery-ctrl-v109" payloads."ctrl-v109" {
             src = ./patches/battery-ctrl.s;
-            syms = { battery = "0x842e04"; button_word = "0x84342c"; };
+            syms = {
+              battery = "0x842e04";
+              button_word = "0x84342c";
+            };
             place = {
-              ".tramp" = { addr = "0xc8f0"; old = "11080450"; };
-              ".shim" = { addr = "0x18280"; old = lib.concatStrings (lib.replicate 40 "00"); };
+              ".tramp" = {
+                addr = "0xc8f0";
+                old = "11080450";
+              };
+              ".shim" = {
+                addr = "0x18280";
+                old = lib.concatStrings (lib.replicate 40 "00");
+              };
             };
             patches = [ ./patches/brand.py ];
           };
@@ -78,8 +140,14 @@
           "batt-l4r4-dongle-v103" = mkAsmMod "batt-l4r4-dongle-v103" payloads."dongle-v103" {
             src = ./patches/batt-l4r4-dongle.s;
             place = {
-              ".tramp" = { addr = "0x74be"; old = "10a3b344"; };
-              ".shim" = { addr = "0x8350"; old = lib.concatStrings (lib.replicate 24 "00"); };
+              ".tramp" = {
+                addr = "0x74be";
+                old = "10a3b344";
+              };
+              ".shim" = {
+                addr = "0x8350";
+                old = lib.concatStrings (lib.replicate 24 "00");
+              };
             };
           };
         };
@@ -123,7 +191,10 @@
 
         refetch-firmware = pkgs.writeShellApplication {
           name = "refetch-firmware";
-          runtimeInputs = [ pkgs.curl pkgs.jq ];
+          runtimeInputs = [
+            pkgs.curl
+            pkgs.jq
+          ];
           text = ''
             type=''${1:?usage: refetch-firmware <type> [outfile]  (75=ctrl 76=dongle 77=wired)}
             out=''${2:-firmware-type''${type}.dat}
@@ -143,7 +214,9 @@
           name = "flash-2c";
           runtimeInputs = [ (pkgs.python3.withPackages (p: [ p.pyusb ])) ];
           text = ''
-            export LD_LIBRARY_PATH="${lib.makeLibraryPath [ pkgs.libusb1 ]}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            export LD_LIBRARY_PATH="${
+              lib.makeLibraryPath [ pkgs.libusb1 ]
+            }''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
             exec python3 ${./flasher/flash2c.py} "$@"
           '';
         };
@@ -153,7 +226,9 @@
           name = "update-all";
           runtimeInputs = [ (pkgs.python3.withPackages (p: [ p.pyusb ])) ];
           text = ''
-            export LD_LIBRARY_PATH="${lib.makeLibraryPath [ pkgs.libusb1 ]}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            export LD_LIBRARY_PATH="${
+              lib.makeLibraryPath [ pkgs.libusb1 ]
+            }''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
             exec python3 ${./flasher/flash2c.py} update-all \
               --ctrl-payload ${mods."battery-ctrl-v109"} \
               --dongle-payload ${mods."batt-l4r4-dongle-v103"} "$@"
@@ -161,7 +236,8 @@
         };
 
         # gen must reproduce the captured vendor command stream byte-for-byte from the stock payload.
-        mkTemplateCheck = target: payload: tmpl:
+        mkTemplateCheck =
+          target: payload: tmpl:
           pkgs.runCommand "flash-template-${target}"
             { nativeBuildInputs = [ (pkgs.python3.withPackages (p: [ p.pyusb ])) ]; }
             ''
@@ -173,10 +249,12 @@
         tc32-tools =
           let
             rev = "8ec375bb95ef63b6d0a4b18008913c03e7928710";
-            tool = name: hash: pkgs.fetchurl {
-              url = "https://raw.githubusercontent.com/flyskywhy/tc32/${rev}/bin/tc32-elf-${name}";
-              inherit hash;
-            };
+            tool =
+              name: hash:
+              pkgs.fetchurl {
+                url = "https://raw.githubusercontent.com/flyskywhy/tc32/${rev}/bin/tc32-elf-${name}";
+                inherit hash;
+              };
           in
           pkgs.runCommand "tc32-tools" { nativeBuildInputs = [ pkgs.patchelf ]; } ''
             mkdir -p $out/bin
@@ -186,25 +264,41 @@
             install -m0755 ${tool "objdump" "sha256-j1x4eaMrgkdXFNnO+Pv3v5TYpoWzd8o8B9yfYZNxP48="} $out/bin/tc32-elf-objdump
             for f in $out/bin/*; do
               patchelf --set-interpreter "$(cat ${pkgs.stdenv.cc}/nix-support/dynamic-linker)" \
-                --set-rpath "${lib.makeLibraryPath [ pkgs.zlib pkgs.glibc ]}" "$f"
+                --set-rpath "${
+                  lib.makeLibraryPath [
+                    pkgs.zlib
+                    pkgs.glibc
+                  ]
+                }" "$f"
             done
           '';
 
       in
       {
         packages =
-          (lib.mapAttrs' (n: v: lib.nameValuePair "fw-${n}" v) firmware) //
-          (lib.mapAttrs' (n: v: lib.nameValuePair "payload-${n}" v) payloads) //
-          (lib.mapAttrs' (n: v: lib.nameValuePair "mod-${n}" v) mods) //
-          {
-            inherit ghidra-tc32 refetch-firmware flash-2c update-all tc32-tools;
+          (lib.mapAttrs' (n: v: lib.nameValuePair "fw-${n}" v) firmware)
+          // (lib.mapAttrs' (n: v: lib.nameValuePair "payload-${n}" v) payloads)
+          // (lib.mapAttrs' (n: v: lib.nameValuePair "mod-${n}" v) mods)
+          // {
+            inherit
+              ghidra-tc32
+              refetch-firmware
+              flash-2c
+              update-all
+              tc32-tools
+              ;
             default = ghidra-tc32;
           };
 
         checks = {
+          formatting = treefmtEval.config.build.check self;
           flash-template-ctrl = mkTemplateCheck "ctrl" payloads."ctrl-v109" ./test/ctrl-v109-flash.tmpl;
-          flash-template-dongle = mkTemplateCheck "dongle" payloads."dongle-v103" ./test/dongle-v103-flash.tmpl;
+          flash-template-dongle =
+            mkTemplateCheck "dongle" payloads."dongle-v103"
+              ./test/dongle-v103-flash.tmpl;
         };
+
+        formatter = treefmtEval.config.build.wrapper;
 
         devShells.default = pkgs.mkShell {
           packages = [
@@ -225,14 +319,17 @@
             echo "  firmware:  nix build .#fw-ctrl-v109   (raw .dat, header intact)"
           '';
         };
-      })
-      // {
-        # Host side of the FW mods: xpad kernel patch exposing the 2C's battery% + L4/R4/Square over 2.4GHz.
-        nixosModules.xpad-2c-charge = { ... }: {
-          boot.kernelPatches = [{
+      }
+    )
+    // {
+      # Host side of the FW mods: xpad kernel patch exposing the 2C's battery% + L4/R4/Square over 2.4GHz.
+      nixosModules.xpad-2c-charge = { ... }: {
+        boot.kernelPatches = [
+          {
             name = "xpad-2c-charge";
             patch = ./patches/xpad-2c-charge.patch;
-          }];
-        };
+          }
+        ];
       };
+    };
 }

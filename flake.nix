@@ -1,5 +1,5 @@
 {
-  description = "Reverse-engineering workbench for 8BitDo Ultimate 2C controller + 2.4GHz dongle firmware (Telink TC32). Pins the vendor firmware images as fixed-output derivations, extracts the ebitdo payloads, and provides Ghidra with the TC32 processor module plus supporting tools. Standalone; not consumed by the parent flake.";
+  description = "Reverse-engineering workbench for 8BitDo Ultimate 2C controller + 2.4GHz dongle firmware (Telink TC32). Pins the vendor firmware images as fixed-output derivations, extracts the ebitdo payloads, assembles the patched payloads, and provides Ghidra with the TC32 processor module plus supporting tools.";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
@@ -22,6 +22,9 @@
       tc32-ghidra,
       treefmt-nix,
     }:
+    # One host, deliberately: tc32-tools installs Telink's prebuilt x86-64 tc32-elf binaries and
+    # binds them to the build host's own dynamic linker, and mkAsm executes them to assemble every
+    # `mod-*` payload, so the production outputs cannot build on any other system.
     flake-utils.lib.eachSystem [ "x86_64-linux" ] (
       system:
       let
@@ -31,6 +34,7 @@
         treefmtEval = treefmt-nix.lib.evalModule pkgs {
           projectRootFile = "flake.nix";
           programs.nixfmt.enable = true;
+          programs.shfmt.enable = true;
         };
 
         base = "http://dl.8bitdo.com:8080";

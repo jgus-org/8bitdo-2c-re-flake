@@ -1,74 +1,78 @@
-# 8BitDo Ultimate 2C firmware RE
+# 8BitDo Ultimate 2C firmware flake
 
-Reverse-engineering workbench and flasher for the 8BitDo Ultimate 2C wireless controller and its 2.4 GHz USB dongle. Standalone, self-contained flake (own pinned nixpkgs + tools). `nix run github:jgus-org/8bitdo-2c-re-flake#update-all` flashes every plugged-in pad with the production firmware.
-
-**Status: shipped.** The original goal — charging pads claiming low gamepad slots on k1 ([jgus-org/tickets#120](https://github.com/jgus-org/tickets/issues/120)) — is resolved *charger-side*: `machine/k1/charge-dock.nix` unbinds a docked pad's input drivers on the designated charging hub, so it charges but claims no slot (no controller firmware involved). Bonus firmware also landed ([#123](https://github.com/jgus-org/tickets/issues/123)): unscaled 0-100 battery % + L4/R4/Square over 2.4 GHz via `patches/battery-ctrl.s` (controller) + `patches/batt-l4r4-dongle.s` (dongle) + this flake's `nixosModules.xpad-2c-charge` kernel patch (host); the controller mod also rebrands it **Ultima+e** so a flashed pad is visibly distinct in `lsusb`. Parked / won't-do: live charge-status over 2.4 GHz ([#121](https://github.com/jgus-org/tickets/issues/121) — VBUS isn't inline-readable), BT force-feedback ([#122](https://github.com/jgus-org/tickets/issues/122)), SWS rig ([#124](https://github.com/jgus-org/tickets/issues/124) — the bootloader dumps over USB instead). Follow-ups: tooling cleanup [#138](https://github.com/jgus-org/tickets/issues/138), fleet rollout [#139](https://github.com/jgus-org/tickets/issues/139).
-
-**Results so far:** [findings/FINDINGS.md](findings/FINDINGS.md) is the vetted decision-grade synthesis (charging gate, BT/FF, extra buttons, flashing). The analysis pipeline (scripts + `symbolicate.py`) is documented in [NOTES.md](NOTES.md).
-
-## NixOS module
-
-`nixosModules.xpad-2c-charge` applies the host kernel patch (`patches/xpad-2c-charge.patch`) via `boot.kernelPatches` — the driver half that surfaces the FW mods' battery % (`/sys/class/power_supply/xpad-*`) and L4/R4/Square. Consume it:
+A Nix flake for the [8BitDo Ultimate 2C Wireless Controller](https://www.8bitdo.com/ultimate-2c-wireless-controller/) and its 2.4 GHz USB dongle: the vendor firmware images pinned as fixed-output derivations, patched firmware payloads built from them, a Telink TC32 reverse-engineering workbench, a USB flasher, and a host-side `xpad` kernel patch that surfaces what the patched firmware reports. The firmware itself comes from 8BitDo's own update API (`http://dl.8bitdo.com:8080`); the Ghidra processor module from [trust1995/Ghidra_TELink_TC32](https://github.com/trust1995/Ghidra_TELink_TC32) and the TC32 binutils from [flyskywhy/tc32](https://github.com/flyskywhy/tc32).
 
 ```nix
 inputs.bitdo-2c-re.url = "github:jgus-org/8bitdo-2c-re-flake";
-# then in the host's modules:
+```
+
+## Outputs
+
+| Output | What you get |
+| --- | --- |
+| `packages.default` (= `ghidra-tc32`) | Ghidra with the Telink TC32 processor module, SLEIGH precompiled, registered through `NIX_GHIDRAHOME`. |
+| `packages.fw-ctrl-v109`, `fw-ctrl-v106`, `fw-dongle-v103`, `fw-dongle-v100` | A vendor `.dat` exactly as 8BitDo serves it (ebitdo header intact). `v109`/`v103` are the current builds; `v106`/`v100` are the factory images, kept for version diffing. |
+| `packages.payload-<target>` | The same image minus its 28-byte ebitdo header — the bytes that land at flash address `0x6000`. This is what Ghidra loads and what the flasher writes. |
+| `packages.mod-battery-ctrl-v109` | Controller payload with 0–100 battery level folded into spare button-word bits and the USB product name rebranded to **Ultima+e**. |
+| `packages.mod-batt-l4r4-dongle-v103` | Dongle payload that relays battery level into report byte 18 and L4/R4/Square into byte 19. |
+| `packages.flash-2c` | The flasher, with python + pyusb + libusb wired in: `flash-2c --target ctrl|dongle|boot probe|flash|read|gen`. |
+| `packages.update-all` | `flash-2c` on autopilot: flashes every plugged-in `2dc8` device with the two mods above. |
+| `packages.refetch-firmware` | Ask the vendor API for the currently published build of a device type (75 controller, 76 dongle, 77 wired). |
+| `packages.tc32-tools` | Telink's `tc32-elf-{as,ld,objcopy,objdump}`, patchelf'd for nix. |
+| `devShells.default` | The RE workbench: `ghidra`, `rizin`, `binwalk`, `binutils`, `file`, `ripgrep`, `jq`, `curl`, `python3`, `refetch-firmware`. |
+| `checks.flash-template-ctrl`, `checks.flash-template-dongle` | Regenerate the flash command stream from a stock payload and diff it byte-for-byte against a captured vendor stream. |
+| `nixosModules.xpad-2c-charge` | The host half of the mods, as a NixOS module. |
+
+```bash
+nix build 'github:jgus-org/8bitdo-2c-re-flake#payload-ctrl-v109'
+nix run 'github:jgus-org/8bitdo-2c-re-flake#flash-2c' -- --target ctrl probe
+nix develop 'github:jgus-org/8bitdo-2c-re-flake'
+```
+
+## NixOS module
+
+`nixosModules.xpad-2c-charge` installs the `xpad` kernel patch, which registers a power supply per pad (`/sys/class/power_supply/xpad-*`, battery percentage) and decodes the relayed L4/R4/Square bits.
+
+```nix
 imports = [ inputs.bitdo-2c-re.nixosModules.xpad-2c-charge ];
 ```
 
-## Quick start
+## Platform support
 
-```bash
-git clone https://github.com/jgus-org/8bitdo-2c-re-flake && cd 8bitdo-2c-re-flake
-nix develop            # or: direnv allow
-```
+Packages, checks and the devshell are published for **x86_64-linux only**. The patched payloads are assembled with Telink's prebuilt x86-64 `tc32-elf` binaries, which run on the build host; no other host can produce them. `nixosModules.xpad-2c-charge` is not per-system and carries no such restriction.
 
-The devshell provides `ghidra` (with the Telink TC32 processor module), `rizin`, `binwalk`, `binutils`, `file`, and `refetch-firmware`.
+## Runtime assumptions
 
-## Provenance chain (derivations)
+- The flake pins its own nixpkgs (`nixos-26.05`). Its packages are built there, not against a consuming flake's package set.
+- `flash-2c` and `update-all` open the USB device directly, which needs root (or an equivalent grant on the device node). Controller in normal mode enumerates as `2dc8:310a`, an idle dongle as `2dc8:301c`, and the resident bootloader as `2dc8:3208` — entered by holding **L1+R1 while plugging in**.
+- The kernel patch is a `boot.kernelPatches` source patch against `drivers/input/joystick/xpad.c`: switching it on rebuilds the host kernel, and it is written against the xpad source of the kernel this flake was developed with.
 
-Firmware is pinned as fixed-output derivations off 8BitDo's live API, then reduced to the flashed image:
+## Licences
 
-| Target | What it is |
-|---|---|
-| `nix build .#fw-ctrl-v109` | Controller firmware v1.09, raw `.dat` (ebitdo header intact) |
-| `nix build .#fw-dongle-v103` | Dongle firmware v1.03, raw `.dat` |
-| `nix build .#payload-ctrl-v109` | Controller payload — header stripped, ready for Ghidra |
-| `nix build .#payload-dongle-v103` | Dongle payload |
-| `nix build .#ghidra-tc32` | Ghidra + Telink TC32 module (SLEIGH precompiled) |
+`.dat` images are 8BitDo's own firmware: `fw-*`, `payload-*` and `mod-*` outputs contain vendor code, and the modified payloads are derivative works of it. `dumps/` holds raw flash content read off the hardware. The TC32 binutils are third-party redistributions of Telink's toolchain, fetched as binaries. Nothing here is licensed by this repository — there is no licence file for the scripts, patches and notes in it.
 
-Factory versions (`ctrl-v106`, `dongle-v100`) are pinned too, for version diffing.
+## Sharp edges
 
-`refetch-firmware <type>` re-queries the API for the *current* published build (75=controller, 76=dongle, 77=wired) — use it to discover new releases, then add the URL+hash to `flake.nix`.
+- `update-all` **writes firmware to every plugged-in `2dc8` device**. `--dry-run` prints the plan; controllers already reading `Ultima+e` are skipped unless `--force`, and dongles always re-flash. A bad app image is re-flashable through the `2dc8:3208` bootloader, which survives an app that no longer enumerates; single-wire debug is the last resort for a corrupt bootloader.
+- Each patch site asserts the stock bytes it overwrites, and the addresses are those of the pinned images. A `mod-*` derivation fails to build against any other firmware version rather than producing a best-effort patch.
+- Only the controller mod is visible over USB. The dongle's product strings sit above its `0x7000`-byte app write window, so a flashed dongle keeps its stock name.
+- The kernel module's battery supply and extra buttons appear only for a pad running the modded firmware; against stock firmware the patch is inert.
+- Ghidra scripts here must be **Java**. Ghidra 12 runs `.py` scripts through PyGhidra (CPython), which plain `analyzeHeadless` does not start.
 
 ## Loading a payload in Ghidra
 
-GUI:
-
-1. Import a `payload-*.bin`, language **Telink_TC32:LE:16:default**.
-2. Set the image base to **0x6000** (fall back to 0x0 if absolute pointers don't resolve).
-3. Registers live at 0x00800000 (len 0x8000) for the 826x family — add via Memory Map if needed.
-
-Headless (reproducible; the project directory must already exist):
+The payload is a raw Telink B80 (TC32 core) image, unencrypted: 28-byte header stripped, image base `0x6000`, language `Telink_TC32:LE:16:default`, registers mapped at `0x800000` (length `0x8000`) if you need them in the memory map. The command below assumes a checkout of this repository, which ships the `scripts/` it points at.
 
 ```bash
 mkdir -p proj
-ghidra-analyzeHeadless proj ctrl -import result-payload \
+ghidra-analyzeHeadless proj ctrl -import result \
   -processor Telink_TC32:LE:16:default \
   -loader BinaryLoader -loader-baseAddr 0x6000 \
   -scriptPath scripts -postScript ReportStats.java
 ```
 
-`ReportStats.java` reports the loaded blocks + instruction/function counts (sanity check). A verified baseline for `payload-ctrl-v109` is **6086 instructions / 98 functions**. Ghidra scripts here **must be Java** — Ghidra 12 runs `.py` scripts through PyGhidra (CPython), which plain `analyzeHeadless` does not start.
+The project directory must already exist. `ReportStats.java` reports loaded blocks and instruction/function counts; `payload-ctrl-v109` yields 6086 instructions across 98 functions.
 
-See [NOTES.md](NOTES.md) for the format details, chip ID, string-analysis findings, the Ghidra-12 packaging gotcha, and the running RE log.
+## Notes
 
-## Format & chip (summary)
-
-- `.dat` = fwupd **ebitdo** container: 28-byte LE header + raw payload; `filesize − dest_len == 28`.
-- Chip = **Telink B80 (TLSR825x-class), TC32 core** — a proprietary ARM9-Thumb-like ISA.
-- Payload is **not encrypted** (entropy ~6.9 bits/byte). No key needed — strip 28 bytes and disassemble.
-
-## Flashing
-
-Modified images flash without a signature: `flasher/flash2c.py` drives the raw IAP (`0x8105` HID) and bootloader (`0x3208` address) protocols directly, generated from protocol knowledge and validated byte-for-byte against the vendor stream (`nix flake check`). `nix run .#update-all` flashes every plugged-in device with its production firmware. See [flasher/README.md](flasher/README.md).
+[findings/FINDINGS.md](findings/FINDINGS.md) is the vetted synthesis of what the firmware does (charging gate, extra buttons, force feedback, flashing). [NOTES.md](NOTES.md) is the running RE log and the protocol detail behind the flasher, [flasher/README.md](flasher/README.md) its command reference, and `scripts/` the headless Ghidra analysis pipeline.

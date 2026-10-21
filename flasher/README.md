@@ -32,15 +32,15 @@ The `dongle` app profile writes only its `0x7000`-byte app region while `0xc4` d
 
 `../test/ctrl-v109-flash.tmpl` / `../test/dongle-v103-flash.tmpl` are the captured vendor command streams (from Ultimate Software V2), the oracle for `gen --template`, which proves the generator reproduces the official byte stream exactly. The flake's `checks.flash-template-{ctrl,dongle}` run this diff against the stock payloads, so `nix flake check` fails on any generator regression.
 
-## Running on k1 (Linux, needs root for USB)
+## Running it (Linux, needs root for USB)
 
 The flake output `flash-2c` bundles `flash2c.py` in a python+pyusb+libusb env — it *is* the tool:
 
 ```
-nix shell /nix/store/…-flash-2c --command flash-2c --target ctrl probe
+nix shell 'github:jgus-org/8bitdo-2c-re-flake#flash-2c' --command flash-2c --target ctrl probe
 ```
 
-(k1 pulls `flash-2c` from attic. To iterate on the script itself, run it under a bare pyusb env instead: `nix shell …-flash-2c --command python3 ./flash2c.py …`.)
+To iterate on the script itself, run it from a checkout in the same env: `nix shell .#flash-2c --command python3 ./flash2c.py …`.
 
 ## Safe sequence
 

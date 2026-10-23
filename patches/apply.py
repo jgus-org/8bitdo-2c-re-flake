@@ -7,6 +7,7 @@ currently equals OLDHEX (same length). Each patch module exposes `patch(data: by
 mutates in place. Total length is preserved (the flash templates substitute at fixed offsets),
 enforced below.
 """
+
 import argparse
 import importlib.util
 import sys
@@ -14,8 +15,12 @@ import sys
 ap = argparse.ArgumentParser()
 ap.add_argument("base")
 ap.add_argument("out")
-ap.add_argument("--load-base", default="0x0", help="img address of payload offset 0")
-ap.add_argument("--place", action="append", default=[], metavar="IMGADDR:OLD:BIN")
+ap.add_argument(
+    "--load-base", default="0x0", help="img address of payload offset 0"
+)
+ap.add_argument(
+    "--place", action="append", default=[], metavar="IMGADDR:OLD:BIN"
+)
 ap.add_argument("patches", nargs="*")
 args = ap.parse_args()
 
@@ -28,9 +33,13 @@ for spec in args.place:
     off = int(off_s, 0) - load_base
     old = bytes.fromhex(old_h)
     new = open(binpath, "rb").read()
-    assert data[off:off + len(old)] == old, f"place @0x{off:x}: expected {old.hex()}, found {data[off:off + len(old)].hex()}"
-    assert len(new) == len(old), f"place @0x{off:x}: assembled {len(new)} bytes != slot {len(old)}"
-    data[off:off + len(new)] = new
+    assert data[off : off + len(old)] == old, (
+        f"place @0x{off:x}: expected {old.hex()}, found {data[off : off + len(old)].hex()}"
+    )
+    assert len(new) == len(old), (
+        f"place @0x{off:x}: assembled {len(new)} bytes != slot {len(old)}"
+    )
+    data[off : off + len(new)] = new
     print(f"placed {len(new)}B @0x{off:x} from {binpath}", file=sys.stderr)
 
 for pf in args.patches:

@@ -1,5 +1,25 @@
 {
   "nodes": {
+    "flake-lib": {
+      "inputs": {
+        "nixpkgs": "nixpkgs",
+        "treefmt-nix": "treefmt-nix"
+      },
+      "locked": {
+        "lastModified": 1792721220,
+        "narHash": "sha256-3v6aTlKeFGQr6ljXJtwc0IjQ43r4vnFTM01WmirFYjo=",
+        "owner": "jgus-org",
+        "repo": "flake-lib",
+        "rev": "2975a1a273fb14db079dca568b0a19bf07c09bfa",
+        "type": "github"
+      },
+      "original": {
+        "owner": "jgus-org",
+        "ref": "v1",
+        "repo": "flake-lib",
+        "type": "github"
+      }
+    },
     "flake-utils": {
       "inputs": {
         "systems": "systems"
@@ -20,6 +40,22 @@
     },
     "nixpkgs": {
       "locked": {
+        "lastModified": 1792506237,
+        "narHash": "sha256-Q/8KLB6jNfpaUN1HAedE/u/Et9feE/zYSsutBLKrCFk=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "5adc50831c259f87faeb09ddf930d43597197473",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixpkgs-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "nixpkgs_2": {
+      "locked": {
         "lastModified": 1783703440,
         "narHash": "sha256-O3/YajjWo001VUIgD8BwaRdSNLUFe7nZ1qV5TwhRBcw=",
         "owner": "NixOS",
@@ -36,10 +72,10 @@
     },
     "root": {
       "inputs": {
+        "flake-lib": "flake-lib",
         "flake-utils": "flake-utils",
-        "nixpkgs": "nixpkgs",
-        "tc32-ghidra": "tc32-ghidra",
-        "treefmt-nix": "treefmt-nix"
+        "nixpkgs": "nixpkgs_2",
+        "tc32-ghidra": "tc32-ghidra"
       }
     },
     "systems": {
@@ -77,6 +113,7 @@
     "treefmt-nix": {
       "inputs": {
         "nixpkgs": [
+          "flake-lib",
           "nixpkgs"
         ]
       },

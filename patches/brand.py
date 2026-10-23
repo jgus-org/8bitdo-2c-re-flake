@@ -3,10 +3,13 @@
 
 def patch(d):
     hits = 0
-    for old, new in ((b"Ultimate", b"Ultima+e"), ("Ultimate".encode("utf-16-le"), "Ultima+e".encode("utf-16-le"))):
+    for old, new in (
+        (b"Ultimate", b"Ultima+e"),
+        ("Ultimate".encode("utf-16-le"), "Ultima+e".encode("utf-16-le")),
+    ):
         start = 0
         while (i := d.find(old, start)) >= 0:
-            d[i:i + len(old)] = new
+            d[i : i + len(old)] = new
             start = i + len(old)
             hits += 1
     assert hits, "no 'Ultimate' brand string found"

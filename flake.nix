@@ -2,25 +2,22 @@
   description = "Reverse-engineering workbench for 8BitDo Ultimate 2C controller + 2.4GHz dongle firmware (Telink TC32). Pins the vendor firmware images as fixed-output derivations, extracts the ebitdo payloads, assembles the patched payloads, and provides Ghidra with the TC32 processor module plus supporting tools.";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
+    flake-lib.url = "github:jgus-org/flake-lib/v1";
     flake-utils.url = "github:numtide/flake-utils";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     tc32-ghidra = {
-      url = "github:trust1995/Ghidra_TELink_TC32/f466dac5f746ac65d57dbbf8eb534988e1076f53";
       flake = false;
-    };
-    treefmt-nix = {
-      url = "github:numtide/treefmt-nix";
-      inputs.nixpkgs.follows = "nixpkgs";
+      url = "github:trust1995/Ghidra_TELink_TC32/f466dac5f746ac65d57dbbf8eb534988e1076f53";
     };
   };
 
   outputs =
     {
       self,
-      nixpkgs,
+      flake-lib,
       flake-utils,
+      nixpkgs,
       tc32-ghidra,
-      treefmt-nix,
     }:
     # One host, deliberately: tc32-tools installs Telink's prebuilt x86-64 tc32-elf binaries and
     # binds them to the build host's own dynamic linker, and mkAsm executes them to assemble every
@@ -31,10 +28,8 @@
         pkgs = import nixpkgs { inherit system; };
         lib = nixpkgs.lib;
 
-        treefmtEval = treefmt-nix.lib.evalModule pkgs {
-          projectRootFile = "flake.nix";
-          programs.nixfmt.enable = true;
-          programs.shfmt.enable = true;
+        orgFormatting = flake-lib.lib.mkFormatting {
+          inherit self system;
         };
 
         base = "http://dl.8bitdo.com:8080";
@@ -42,29 +37,29 @@
 
         # dl.8bitdo.com API types: 75 controller, 76 dongle, 77 wired. Verify downloads by size; the manifest md5 field is unreliable.
         specs = {
-          "ctrl-v109" = {
-            url = "${upload}/3652c29e-7b6c-4521-9426-abf153e7298b.dat";
-            hash = "sha256-hzSeYDu5LWrp/23vtvMrEN4vLTJS/k5EL6eZP5gvKlo=";
-          };
           "ctrl-v106" = {
-            url = "${upload}/eeaedee4-deda-481a-aede-63e73a6eb1c0.dat";
             hash = "sha256-9/iwKd3yY4mIVr6ES/017lG3sxlWzOha71OGOnwP+M4=";
+            url = "${upload}/eeaedee4-deda-481a-aede-63e73a6eb1c0.dat";
           };
-          "dongle-v103" = {
-            url = "${upload}/8c7285c9-e169-4f22-8e3b-928d08599151.dat";
-            hash = "sha256-5t0lZeIA5kfkeYL0LriOyumdNKseGrIBi0mizl+Rodk=";
+          "ctrl-v109" = {
+            hash = "sha256-hzSeYDu5LWrp/23vtvMrEN4vLTJS/k5EL6eZP5gvKlo=";
+            url = "${upload}/3652c29e-7b6c-4521-9426-abf153e7298b.dat";
           };
           "dongle-v100" = {
-            url = "${upload}/4e47d5a0-0776-444c-a9fe-2a3a0a08d5d6.dat";
             hash = "sha256-oqH5wjw9kGiAA7po193U/p06rRseRAITKV5DVOcfdW0=";
+            url = "${upload}/4e47d5a0-0776-444c-a9fe-2a3a0a08d5d6.dat";
+          };
+          "dongle-v103" = {
+            hash = "sha256-5t0lZeIA5kfkeYL0LriOyumdNKseGrIBi0mizl+Rodk=";
+            url = "${upload}/8c7285c9-e169-4f22-8e3b-928d08599151.dat";
           };
         };
 
         firmware = lib.mapAttrs (
           n: s:
           pkgs.fetchurl {
+            inherit (s) hash url;
             name = "8bitdo-2c-${n}.dat";
-            inherit (s) url hash;
           }
         ) specs;
 
@@ -78,9 +73,9 @@
         # Assemble a shim .s (sections placed at the img addresses in `place`, firmware `syms` resolved) into one raw .bin per section.
         mkAsm =
           {
+            place,
             src,
             syms ? { },
-            place,
           }:
           pkgs.runCommand "8bitdo-2c-shim" { nativeBuildInputs = [ tc32-tools ]; } ''
             cat > shim.ld <<'LD'
@@ -102,13 +97,13 @@
         mkAsmMod =
           modname: base:
           {
+            patches ? [ ],
+            place,
             src,
             syms ? { },
-            place,
-            patches ? [ ],
           }:
           let
-            asm = mkAsm { inherit src syms place; };
+            asm = mkAsm { inherit place src syms; };
             placeArgs = lib.concatStringsSep " " (
               lib.mapAttrsToList (
                 sec: p: "--place ${p.addr}:${p.old}:${asm}/${lib.removePrefix "." sec}.bin"
@@ -121,46 +116,44 @@
             }";
 
         mods = {
-          # Controller: fold battery 0-100 into the spare button-word bits; rebrand Ultima+e.
-          "battery-ctrl-v109" = mkAsmMod "battery-ctrl-v109" payloads."ctrl-v109" {
-            src = ./patches/battery-ctrl.s;
-            syms = {
-              battery = "0x842e04";
-              button_word = "0x84342c";
-            };
-            place = {
-              ".tramp" = {
-                addr = "0xc8f0";
-                old = "11080450";
-              };
-              ".shim" = {
-                addr = "0x18280";
-                old = lib.concatStrings (lib.replicate 40 "00");
-              };
-            };
-            patches = [ ./patches/brand.py ];
-          };
           # Dongle: relay battery -> report[18], L4/R4/Square -> report[19]. No rebrand — the dongle's product strings sit above its 0x7000 app-IAP write window, so a brand patch there is never flashed.
           "batt-l4r4-dongle-v103" = mkAsmMod "batt-l4r4-dongle-v103" payloads."dongle-v103" {
-            src = ./patches/batt-l4r4-dongle.s;
             place = {
-              ".tramp" = {
-                addr = "0x74be";
-                old = "10a3b344";
-              };
               ".shim" = {
                 addr = "0x8350";
                 old = lib.concatStrings (lib.replicate 24 "00");
               };
+              ".tramp" = {
+                addr = "0x74be";
+                old = "10a3b344";
+              };
+            };
+            src = ./patches/batt-l4r4-dongle.s;
+          };
+          # Controller: fold battery 0-100 into the spare button-word bits; rebrand Ultima+e.
+          "battery-ctrl-v109" = mkAsmMod "battery-ctrl-v109" payloads."ctrl-v109" {
+            patches = [ ./patches/brand.py ];
+            place = {
+              ".shim" = {
+                addr = "0x18280";
+                old = lib.concatStrings (lib.replicate 40 "00");
+              };
+              ".tramp" = {
+                addr = "0xc8f0";
+                old = "11080450";
+              };
+            };
+            src = ./patches/battery-ctrl.s;
+            syms = {
+              battery = "0x842e04";
+              button_word = "0x84342c";
             };
           };
         };
 
         # A Ghidra module root holding only the TC32 processor, SLEIGH precompiled so nothing writes to the store at load. Ghidra 12 discovers it via NIX_GHIDRAHOME (an extra application root added by the nixpkgs patch), not by scanning the install's Processors dir.
         tc32-module = pkgs.stdenv.mkDerivation {
-          pname = "ghidra-tc32-module";
           inherit (pkgs.ghidra) version;
-          dontUnpack = true;
           buildPhase = ''
             runHook preBuild
             export HOME=$TMPDIR
@@ -170,18 +163,21 @@
             ${pkgs.ghidra}/lib/ghidra/support/sleigh -a Processors/Telink_TC32
             runHook postBuild
           '';
+          dontUnpack = true;
           installPhase = ''
             runHook preInstall
             install -d $out/lib/ghidra/Ghidra
             cp -a Processors $out/lib/ghidra/Ghidra/Processors
             runHook postInstall
           '';
+          pname = "ghidra-tc32-module";
         };
 
         ghidra-tc32 = pkgs.symlinkJoin {
+          meta.description = "Ghidra with the Telink TC32 processor module (SLEIGH precompiled), added via NIX_GHIDRAHOME";
           name = "ghidra-tc32-${pkgs.ghidra.version}";
-          paths = [ tc32-module ];
           nativeBuildInputs = [ pkgs.makeBinaryWrapper ];
+          paths = [ tc32-module ];
           postBuild = ''
             touch $out/lib/ghidra/Ghidra/.dbDirLock
             makeWrapper ${pkgs.ghidra}/bin/ghidra $out/bin/ghidra \
@@ -190,7 +186,6 @@
               --set NIX_GHIDRAHOME "$out/lib/ghidra/Ghidra"
             ln -s ${pkgs.ghidra}/share $out/share
           '';
-          meta.description = "Ghidra with the Telink TC32 processor module (SLEIGH precompiled), added via NIX_GHIDRAHOME";
         };
 
         refetch-firmware = pkgs.writeShellApplication {
@@ -256,8 +251,8 @@
             tool =
               name: hash:
               pkgs.fetchurl {
-                url = "https://raw.githubusercontent.com/flyskywhy/tc32/${rev}/bin/tc32-elf-${name}";
                 inherit hash;
+                url = "https://raw.githubusercontent.com/flyskywhy/tc32/${rev}/bin/tc32-elf-${name}";
               };
           in
           pkgs.runCommand "tc32-tools" { nativeBuildInputs = [ pkgs.patchelf ]; } ''
@@ -279,31 +274,13 @@
 
       in
       {
-        packages =
-          (lib.mapAttrs' (n: v: lib.nameValuePair "fw-${n}" v) firmware)
-          // (lib.mapAttrs' (n: v: lib.nameValuePair "payload-${n}" v) payloads)
-          // (lib.mapAttrs' (n: v: lib.nameValuePair "mod-${n}" v) mods)
-          // {
-            inherit
-              ghidra-tc32
-              refetch-firmware
-              flash-2c
-              update-all
-              tc32-tools
-              ;
-            default = ghidra-tc32;
-          };
-
         checks = {
-          formatting = treefmtEval.config.build.check self;
           flash-template-ctrl = mkTemplateCheck "ctrl" payloads."ctrl-v109" ./test/ctrl-v109-flash.tmpl;
           flash-template-dongle =
             mkTemplateCheck "dongle" payloads."dongle-v103"
               ./test/dongle-v103-flash.tmpl;
+          formatting = orgFormatting.check;
         };
-
-        formatter = treefmtEval.config.build.wrapper;
-
         devShells.default = pkgs.mkShell {
           packages = [
             ghidra-tc32
@@ -323,6 +300,21 @@
             echo "  firmware:  nix build .#fw-ctrl-v109   (raw .dat, header intact)"
           '';
         };
+        formatter = orgFormatting.formatter;
+        packages =
+          (lib.mapAttrs' (n: v: lib.nameValuePair "fw-${n}" v) firmware)
+          // (lib.mapAttrs' (n: v: lib.nameValuePair "payload-${n}" v) payloads)
+          // (lib.mapAttrs' (n: v: lib.nameValuePair "mod-${n}" v) mods)
+          // {
+            inherit
+              flash-2c
+              ghidra-tc32
+              refetch-firmware
+              tc32-tools
+              update-all
+              ;
+            default = ghidra-tc32;
+          };
       }
     )
     // {

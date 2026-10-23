@@ -5,6 +5,7 @@ Controller `ctrl-v109` (Telink B80/TC32, app payload base 0x6000, len 74752, end
 ---
 
 ## BOTTOM LINE (6 lines)
+
 1. **Charging sense is in the app** (`analog_read(0x88) & bit5` @FUN_00007138); the **power-OFF decision + its "am I charging" gate are NOT** — they live in the resident bootloader (0x0–0x5FFF, not in our image), so the "won't power off while charging / wakes on a dumb charger" behavior is **not fixable via the USB-flashable app**; only SWS reaches it.
 2. **BT inherits the same charge/power gate** — power mgmt runs in the transport-agnostic main loop (0xa430–0xa48c); radio mode only swaps the live stack. [INFERRED, med]
 3. **L4/R4 vanish over 2.4GHz at the DONGLE**: `FUN_0000733c` maps only button-word bits {0–13,17} and silently drops the upper block {16,18,25,26,27,28}; the controller packs the full word. Cleanest fix is a dongle-side OR-map — **conditional on the (unproven) assumption that the RF frame actually carries those bits.**
@@ -23,22 +24,24 @@ Controller `ctrl-v109` (Telink B80/TC32, app payload base 0x6000, len 74752, end
 **Where the gate lives.** The suspend root 0x7210 has **zero in-image callers** (full-listing grep for a call/branch to 0x7210 = 0). `reg_wakeup_en 0x6e` is **never written in-image** (absent from `poolregs`). Best explanation: the whole PM cluster (0x6020/0x70b4/0x7160/0x7174/0x7210) is a **callback invoked from the resident bootloader**, which also arms the VBUS/LPC deep-sleep wake source. So a power-off suspend on the battery rail is immediately re-woken while VBUS is present → the pad appears not to turn off, and a dumb charger cold-wakes it.
 
 **CONFIDENCE.**
-- Charge-sense *mechanism* (reads 0x88, gates charge-LED on bit5): **VERIFIED, high**.
-- **[DOWNGRADED]** The *identity* "bit5 = the low-power comparator = 5V/VBUS present" is **INFERRED, low-med** and **conflicts with register-map.md**, which documents the LPC result at **bit6 (0x40)**, not bit5. Either the pvvx-8258-sourced map has the wrong bit for the B80, or 0x88/bit5 is a different status than the documented LPC result. What is certain: the firmware branches its charge-LED loop on 0x88 bit5.
+
+- Charge-sense _mechanism_ (reads 0x88, gates charge-LED on bit5): **VERIFIED, high**.
+- **[DOWNGRADED]** The _identity_ "bit5 = the low-power comparator = 5V/VBUS present" is **INFERRED, low-med** and **conflicts with register-map.md**, which documents the LPC result at **bit6 (0x40)**, not bit5. Either the pvvx-8258-sourced map has the wrong bit for the B80, or 0x88/bit5 is a different status than the documented LPC result. What is certain: the firmware branches its charge-LED loop on 0x88 bit5.
 - Sleep=`0x81`@0x6026 / reboot=`0x20`@0x716a / single sleep call site: **VERIFIED, high**.
 - "No direct caller of suspend root 0x7210": **VERIFIED**. "Therefore bootloader-resident / bootloader arms the wake": **INFERRED, med** (the exhaustive pointer search behind it was not independently reproducible; an indirect dispatch through a function-pointer word cannot be excluded from text artifacts alone).
 - `reg_wakeup_en 0x6e` never written in-image: **VERIFIED** (strong: SDK register writes are pool-based).
 
-**Firmware-vs-hardware split on power-ON.** Partly firmware but **not from the app image**, and a pure-hardware contribution cannot be excluded. A battery pad's "off" is suspend/deep-sleep on the battery rail, so a dumb-charger wake needs an *armed* analog (LPC/VBUS) wake source — that's firmware, but **bootloader-side**, hence not in the app payload. A board LDO/POR that cold-boots the MCU whenever VBUS appears would be pure hardware and not firmware-preventable at all. **[INFERRED, med]** Distinguishing the two needs a bench trace: does MCU VDD collapse when the pad is "off"? If yes → firmware/bootloader wake-arm; if VDD stays up → hardware.
+**Firmware-vs-hardware split on power-ON.** Partly firmware but **not from the app image**, and a pure-hardware contribution cannot be excluded. A battery pad's "off" is suspend/deep-sleep on the battery rail, so a dumb-charger wake needs an _armed_ analog (LPC/VBUS) wake source — that's firmware, but **bootloader-side**, hence not in the app payload. A board LDO/POR that cold-boots the MCU whenever VBUS appears would be pure hardware and not firmware-preventable at all. **[INFERRED, med]** Distinguishing the two needs a bench trace: does MCU VDD collapse when the pad is "off"? If yes → firmware/bootloader wake-arm; if VDD stays up → hardware.
 
 **PATCH / NEXT STEP.**
+
 - **Patch 1 (safe, in-app, but does NOT achieve the goal alone):** turn the charge-sense branch unconditional — `tjne 0x7154` → `B.n 0x7154`, i.e. halfword 0xC122 → 0x8722 (same target). **Payload offset 0x110d `0xc1→0x87`; on the vendor file with the 28-byte header this is on-disk offset 0x1129.** Effect: always takes the "not charging" path, killing the charge LED. VERIFIED encoding/effect/in-region. It does **not** defeat the bootloader power gate.
 - **Decisive fix (goal 1 proper):** patch the power-off decision + wake-arm in the **bootloader (0x0–0x5FFF)**, reachable **only via hardware SWS**, not the USB IAP (which only writes the app region — and on the dongle is even clamped to the staging bank; see goal 5).
 - **First experiment:** SWS full-flash dump of a sacrificial unit → disassemble the sub-0x6000 bootloader → locate the `reg_wakeup_en 0x6e` write and the charge-gated branch. Also do the VDD-collapse bench measurement to settle the hardware-vs-firmware question before any bootloader edit.
 
 **UNVERIFIED.** The physical meaning of 0x88 bit5 (vs the documented LPC bit6); the bootloader-callback inference for the PM cluster; the exact bootloader branch/register that implements "stay awake while charging"; whether a hardware LDO independently cold-boots on VBUS.
 
-**[REFUTED sub-recipe]** The originally-proposed "Patch 2" (disarm the LPC reference by NOP-ing the two `tmovs` at 0x7226/0x7228) is **defective as written** — it leaves the `tjl 0x6dc4` call at 0x722a live, which then calls `analog_write` with stale r0/r1 and writes an *unintended* analog register. To actually drop that write you must also NOP 0x722a. (Efficacy is uncertain regardless, since the true wake-enable is bootloader-side.)
+**[REFUTED sub-recipe]** The originally-proposed "Patch 2" (disarm the LPC reference by NOP-ing the two `tmovs` at 0x7226/0x7228) is **defective as written** — it leaves the `tjl 0x6dc4` call at 0x722a live, which then calls `analog_write` with stale r0/r1 and writes an _unintended_ analog register. To actually drop that write you must also NOP 0x722a. (Efficacy is uncertain regardless, since the true wake-enable is bootloader-side.)
 
 ---
 
@@ -63,22 +66,25 @@ Controller `ctrl-v109` (Telink B80/TC32, app payload base 0x6000, len 74752, end
 **ANSWER — what SQUARE/STAR do.** Upper-block bits are consumed by **local handlers**, so they never emit as buttons in either transport: **bit18** = hold-counter handler @0xd10c (mask 0x40000, saturates ~24 ticks → fires) = hold-to-program/profile; **bit28** tested @0xcd7a/0xd152; **bit17/PA4** hold handler @0xd0b0. These are the program/turbo mechanism.
 
 **CONFIDENCE.**
+
 - Matrix scanner + pins + bit set: **VERIFIED, high**.
 - Dongle maps only {0–13,17}, drops {16,18,25,26,27,28}: **VERIFIED, high (decisive)**.
-- All three controller packers send the full word: **VERIFIED**, with a **scope caveat**: these are the **wired/USB** packers. They prove the *wired* report carries every bit; they do **not** prove the **2.4GHz RF frame** does — the RF/BLE TX packer is in the closed SDK region and was not verified.
+- All three controller packers send the full word: **VERIFIED**, with a **scope caveat**: these are the **wired/USB** packers. They prove the _wired_ report carries every bit; they do **not** prove the **2.4GHz RF frame** does — the RF/BLE TX packer is in the closed SDK region and was not verified.
 - Bits 18 & 28 locally consumed (program/turbo): **VERIFIED referenced**; the names are **INFERRED** (stripped image).
 
 **[REFUTED / COLLAPSED]**
+
 - The absolute SRAM address for the button word — the report's **0x84342c is wrong**; the scanner's store pointers (pool @0xc938/0xc93c) decode to **≈0x0004942C** (mirror +0x20 = 0x0004944C). Non-load-bearing, but correct the address if you touch it.
 - **Bits 25/26/27 are ALSO locally consumed** — a remap handler @0xccc4…0xcd16 tests them (`<<6/<<5/<<4`) and does key-remap stores. So the report's clean split "L4/R4 = handler-free bits {16,25,26,27}" **fails for 25/26/27**; only **bit16** had no local handler found. **⇒ The exact L4/R4 bit indices are materially uncertain and need one captured RF/BLE frame to pin down.** [INFERRED, med → downgraded]
 
 **PATCH / NEXT STEP (remap).** For BT, L4/R4 are already governed by the controller's own HID map (should already be visible). To recover them over **2.4GHz**:
-- **Option A (dongle-side, preferred IF the premise holds):** add OR-map blocks in `FUN_0000733c` routing the L4/R4 source bits to free USB button bits. The 16-bit field has spare bits (output bits 0x800/0x8000 appear unused, contra "XInput has no spare"). **Premise to verify first — UNPROVEN:** that the 2.4GHz RF frame actually *carries* bits {16,18,25–28}. The dongle only ever reads bits {0–13,17} of `param_3`; nothing proves the controller's RF TX packer transmits the upper bytes. If it sends fewer bytes, a dongle-only patch cannot recover L4/R4 and a **controller** change is also required.
+
+- **Option A (dongle-side, preferred IF the premise holds):** add OR-map blocks in `FUN_0000733c` routing the L4/R4 source bits to free USB button bits. The 16-bit field has spare bits (output bits 0x800/0x8000 appear unused, contra "XInput has no spare"). **Premise to verify first — UNPROVEN:** that the 2.4GHz RF frame actually _carries_ bits {16,18,25–28}. The dongle only ever reads bits {0–13,17} of `param_3`; nothing proves the controller's RF TX packer transmits the upper bytes. If it sends fewer bytes, a dongle-only patch cannot recover L4/R4 and a **controller** change is also required.
 - **Option C (size-neutral alias):** single OR-immediate edit in `FUN_0000733c` so L4/R4 alias an existing/rare button — trivial, XInput-safe — still gated on the same RF-carries-the-bits premise.
 - **Option B (repurpose SQUARE/STAR):** NOP the local consumers and redirect their OR target to a dongle-mapped bit, then add to the dongle map. Higher risk (loses program/turbo/remap). **Note:** the report's cited NOP site **0xd0fc is a pool literal** (the mirror-global pointer 0x0004944C), not an instruction — editing there corrupts the pointer; the real bit18 consumer is **0xd10c+**.
 - **First experiment:** capture one live 2.4GHz RF frame (or BLE input report) with L4/R4/SQUARE/STAR pressed to (a) confirm the RF payload carries the upper bits and (b) resolve the exact bit→button assignment. This single capture de-risks Options A/C and pins the names.
 
-**UNVERIFIED.** Button *names* (stripped); exact L4/R4 vs 25/26/27 mapping; whether the 2.4GHz RF frame carries the upper block; the closed-SDK BLE-notify packer contents.
+**UNVERIFIED.** Button _names_ (stripped); exact L4/R4 vs 25/26/27 mapping; whether the 2.4GHz RF frame carries the upper block; the closed-SDK BLE-notify packer contents.
 
 ---
 
@@ -95,6 +101,7 @@ BT mode uses a **different** HID report map @0x1734c that **does** declare a rum
 **[CORRECTIONS — do not change the verdict]** attrLen = **1**, not 4 (at most 1 byte lands in 0x84315c via the SDK default path, not 4); "props 0x0E" is the **characteristic-declaration** property byte @0x17330 — the value attribute's ATT permission is **0x03** (READ|WRITE). The duration byte 0x8434f1 is also written by `faa0` (decrement), so "written only in fa68" holds only for the two intensity bytes.
 
 **PATCH / NEXT STEP.** Only the BLE→`fa68` hop is missing; everything downstream works.
+
 - **Option A (install the missing ATT write callback):** write a shim pointer into the currently-zero, in-region word at flash **0x17764**; the shim reads `value[0]`/`value[1]` from the ATT write packet and calls `FUN_0000fa68(a, b, 0)`. Reading from the packet sidesteps the attrLen=1 buffer cap.
 - **Option B (poll 0x84315c from the shared main loop):** redirect one main-loop `bl` slot to a shim that reads the buffer and calls `fa68` on change. Bypasses the callback ABI — **but attrLen=1 means a naive 4-byte poll reads stale bytes for motorB**; poll only what the SDK actually stores, or force a larger attrLen.
 - **Bench-decidable, not static:** every `.w`/`.r` in the ATT table is NULL, so whether the closed Telink ATT dispatcher honors a non-null `.w` is **not shown in-image**. Validate empirically: write known BLE output-report bytes, read 0x84315c / observe the motor via SWS; and resolve the exact `value` offset in the write packet the same way.
@@ -110,6 +117,7 @@ BT mode uses a **different** HID report map @0x1734c that **does** declare a rum
 **Dongle IAP, fully traced (`iap_dispatch @0xd998`):** 64-byte report; magic **0x81 0x05**; command @byte[2]; 16-byte header = packet[2..17] with **length @[6..7] (≤46)**, **expected CRC @[8..9]**, **u32 LE flash address @[14..17]**; ≤46-byte data @[18..63]; device replies prefixed **0x02 0x05** on USB EP3/EP4/EP8 (`FUN_0xd124`/`0xdd7c`). Command ids C1/C3/04/03/C4/07/02/05/0B match the numpad USB sniff byte-for-byte.
 
 **CRC recipe — RESOLVED [VERIFIED, VERY HIGH]:** `FUN_0x0000d0e4` = **CRC-16/MODBUS** (poly 0xA001 reflected = 0x8005, init 0xFFFF, refin/refout, **no xorout**), over the **payload bytes only**, expected value at **packet[8..9] little-endian**. `check("123456789") = 0x4B37` (reproduced; the TC32 `tshftrs` in the loop is logical LSR, proven three ways). Recompute:
+
 ```python
 def crc16_modbus(d):
     c = 0xFFFF
@@ -119,19 +127,22 @@ def crc16_modbus(d):
             c = (c >> 1) ^ 0xA001 if c & 1 else c >> 1
     return c & 0xFFFF          # packet[8:10] = c.to_bytes(2, "little")
 ```
+
 Variants (not the per-chunk path): `multi_writeFlash` (cmd 0x0B) uses an **8-bit additive sum over 59 bytes**; `saveCodeBlock`/`savehead4K` use the same MODBUS CRC over its 0x30-byte header (4-byte CRC appended at header+0x30).
 
 **No signature / no decryption [VERIFIED, VERY HIGH]:** the only data-dependent rejection is `crc != header` (writefirmware `tcmp r2,r9`@0xd3e0 / boot_wirteFlash `tcmp r2,sl`@0xd4c2); data is written verbatim (`&packet[18]` → flash, untransformed). The AES engine (0x800700/708/710/711) is **never referenced** anywhere in the dongle image. No RF in the IAP chain.
 
 **Self-flash, not a relay [VERIFIED]:** handlers program the dongle's **own** SPI flash (SDK `0xb220` write / `0xb1ec` erase / `0xb204` read) and answer on its own USB. Controller and dongle are each flashed independently over their **own** USB in L1+R1 bootloader mode. **Dongle-relay-to-controller is RULED OUT** — firmware travels over wired USB only.
 
-**[REFUTED sub-claim]** "boot_wirteFlash writes raw addr, no bounds, any region" is **wrong**. The shared low-level primitive `FUN_0xcd0c` loads −0x12000 and unsigned-rejects `addr − 0x12000 > 0xD000`, so **all IAP writes are clamped to [0x12000, 0x1F000]** (the staging/upper bank). The IAP only **stages**; the resident bootloader applies staging→live on reboot. It cannot directly overwrite the live app (0x6000–0x11FFF) or bootloader (0x0–0x5FFF). This does **not** weaken "CRC-only, no signature," but it does mean even a CRC-bypass patch stages content — it doesn't reach the live regions. (Consistent with the container's `dest_addr=0x6000` being the *final* resting place, applied from staging.)
+**[REFUTED sub-claim]** "boot_wirteFlash writes raw addr, no bounds, any region" is **wrong**. The shared low-level primitive `FUN_0xcd0c` loads −0x12000 and unsigned-rejects `addr − 0x12000 > 0xD000`, so **all IAP writes are clamped to [0x12000, 0x1F000]** (the staging/upper bank). The IAP only **stages**; the resident bootloader applies staging→live on reboot. It cannot directly overwrite the live app (0x6000–0x11FFF) or bootloader (0x0–0x5FFF). This does **not** weaken "CRC-only, no signature," but it does mean even a CRC-bypass patch stages content — it doesn't reach the live regions. (Consistent with the container's `dest_addr=0x6000` being the _final_ resting place, applied from staging.)
 
 **CONTROLLER caveat — the real remaining gap [INFERRED, med]:** the entire IAP RE above is of the **dongle**. The controller's resident bootloader (0x0–0x5FFF) is **not in our dump**. So for the controller:
+
 - "No signature / CRC-only" is **inferred** (from the dongle handler + fwupd's `UNSIGNED_PAYLOAD` flag + the byte-identical 0x8105 command family in the numpad sniff) — **PLAUSIBLE, not established**.
 - The controller's **exact CRC recipe and CRC-field location are un-extracted (LOW)**. It plausibly matches CRC-16/MODBUS but that is not proven, and the controller's staging/apply addressing may differ from the dongle's [0x12000,0x1F000].
 
 **PATCH / NEXT STEP.**
+
 - **On-device CRC-bypass (dongle, needs SWS — circular over USB):** writefirmware `tjne 0xd3a6`@0xd3e2 (`e0 c1`) → NOP `c0 46`; or boot_wirteFlash `tjeq 0xd4e6`@0xd4c4 (`0f c0`) → uncond `tj.n` `0f 80`. Both VERIFIED encodings, both in the app region (0x6000–0xFFFF). Still confined to the staging window by `FUN_0xcd0c`.
 - **Controller, the decisive experiment:** **usbmon + Wireshark capture of the official Ultimate Software V2 flashing STOCK firmware to the 2C** in L1+R1 bootloader mode. This validates the CRC on real bytes for a known payload, reveals the device ACK format and the 2C boot-mode PID, and yields a replay client. Then flip one non-functional byte, recompute the CRC(s), reflash — the definitive signed-vs-unsigned test — with SELECT+START recovery and SWS as the net.
 - **SWS single-wire rig (do this first):** non-FTDI USB-serial (CH340/CP210x/PL2303, no RX LED), `TX→SWS` via ~1 kΩ, `RTS→RESET`, GND, +3V3; "activation" stops the core within the first ms. It is the only full-flash backup, the only un-brick path, and the only route to the goal-1 bootloader gate.
@@ -143,6 +154,7 @@ Variants (not the per-chunk path): `multi_writeFlash` (cmd 0x0B) uses an **8-bit
 ---
 
 ## Cross-cutting: what a modification campaign needs, in order
+
 1. **SWS rig on a sacrificial 2C** → chip-ID read → full-flash dump (backs up bootloader + MAC + RF-cal; enables everything else). Resolves goal-1's bootloader gate and goal-5's controller-CRC gap directly.
 2. **usbmon capture of the official flasher** on stock firmware → validates the (inferred) controller IAP + CRC against real bytes, reveals ACK/PID.
 3. **One live 2.4GHz/BLE frame capture** with L4/R4/SQUARE/STAR pressed → confirms the RF frame carries the upper button bits and pins the exact bit→button map (goal 3).

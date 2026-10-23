@@ -2,7 +2,7 @@
 
 `flash2c.py` drives two plaintext flash protocols (no signature), both **generated from protocol knowledge** — no captured-sequence replay. Protocol byte layouts are in [../NOTES.md](../NOTES.md).
 
-- **App IAP (`0x8105`)** on the running controller (`2dc8:310a`, intf 2, EP 0x06) or idle dongle (`2dc8:301c`, intf 0, EP 0x05). The full command stream — session handshake, per-4 KB-sector `0xc3` erase + `0x04` begin + `0x03` data, a verify-burst re-issuing every sector's `0xc3`, then `0xc4` finalize + `0x07` reset — is built from the payload. Validated **byte-for-byte** against the captured vendor templates (see *Validation* below).
+- **App IAP (`0x8105`)** on the running controller (`2dc8:310a`, intf 2, EP 0x06) or idle dongle (`2dc8:301c`, intf 0, EP 0x05). The full command stream — session handshake, per-4 KB-sector `0xc3` erase + `0x04` begin + `0x03` data, a verify-burst re-issuing every sector's `0xc3`, then `0xc4` finalize + `0x07` reset — is built from the payload. Validated **byte-for-byte** against the captured vendor templates (see _Validation_ below).
 - **Bootloader (`0x3208`)** address protocol, reversed from `8BitDoFirmwareUpdaterTools.dll`: erase/write/read by device address. Recovers a controller whose app crashes before USB enumeration (no `310a`). Enter by holding **L1+R1** while plugging in.
 
 Data blocks in both protocols carry a **CRC-16/MODBUS**. App per-sector addresses are 0-based; the bootloader's are absolute (app base `0x6000` = payload offset 0).
@@ -20,11 +20,11 @@ Enumerates every plugged-in `2dc8` device and flashes each with its production p
 
 ## Targets (`--target`)
 
-| target | device | mode | intf | OUT | IN | when |
-|---|---|---|---|---|---|---|
-| `ctrl` | `2dc8:310a` controller, XInput | app | 2 | 0x06 | 0x83 | pad running on USB |
-| `dongle` | `2dc8:301c` dongle, IDLE | app | 0 | 0x05 | 0x84 | dongle on USB |
-| `boot` | `2dc8:3208` bootloader | boot | 0 | 0x05 | 0x84 | pad in L1+R1 mode |
+| target   | device                         | mode | intf | OUT  | IN   | when               |
+| -------- | ------------------------------ | ---- | ---- | ---- | ---- | ------------------ |
+| `ctrl`   | `2dc8:310a` controller, XInput | app  | 2    | 0x06 | 0x83 | pad running on USB |
+| `dongle` | `2dc8:301c` dongle, IDLE       | app  | 0    | 0x05 | 0x84 | dongle on USB      |
+| `boot`   | `2dc8:3208` bootloader         | boot | 0    | 0x05 | 0x84 | pad in L1+R1 mode  |
 
 The `dongle` app profile writes only its `0x7000`-byte app region while `0xc4` declares the full payload length — a vendor quirk baked into `TARGETS`.
 
@@ -34,7 +34,7 @@ The `dongle` app profile writes only its `0x7000`-byte app region while `0xc4` d
 
 ## Running it (Linux, needs root for USB)
 
-The flake output `flash-2c` bundles `flash2c.py` in a python+pyusb+libusb env — it *is* the tool:
+The flake output `flash-2c` bundles `flash2c.py` in a python+pyusb+libusb env — it _is_ the tool:
 
 ```
 nix shell 'github:jgus-org/8bitdo-2c-re-flake#flash-2c' --command flash-2c --target ctrl probe

@@ -7,6 +7,7 @@ leaves register accesses as `*DAT_<pooladdr>`. This scans the flat payload (load
 image-address to a name from regmap.tsv, and rewrites every `<prefix>_<pooladdr8hex>` token in the
 decompilation to `<name>_p` (pointer-to-register). Emits the rewritten decomp plus a coverage report.
 """
+
 import argparse
 import re
 import sys
@@ -39,7 +40,7 @@ def scan_pools(payload, base):
     pools = {}
     n = len(payload) & ~3
     for i in range(0, n, 4):
-        v = int.from_bytes(payload[i:i + 4], "little")
+        v = int.from_bytes(payload[i : i + 4], "little")
         if REG_LO <= v < REG_HI:
             pools[base + i] = v
     return pools
@@ -82,20 +83,29 @@ def main():
     def sub(m):
         return pool_name.get(m.group(2).lower(), m.group(0))
 
-    out_text, n = pattern.subn(lambda m: pool_name.get(m.group(2).lower(), m.group(0)), text)
+    out_text, n = pattern.subn(
+        lambda m: pool_name.get(m.group(2).lower(), m.group(0)), text
+    )
     Path(args.out).write_text(out_text)
 
     lines = []
-    lines.append(f"payload={args.payload} base={args.base} bytes={len(payload)}")
+    lines.append(
+        f"payload={args.payload} base={args.base} bytes={len(payload)}"
+    )
     lines.append(f"pool words in register window: {len(pools)}")
     lines.append(f"distinct registers referenced: {len(set(pools.values()))}")
-    lines.append(f"named (in regmap): {len(used)} registers via {len(pool_name)} pool words")
+    lines.append(
+        f"named (in regmap): {len(used)} registers via {len(pool_name)} pool words"
+    )
     lines.append(f"token rewrites applied: {n}")
     lines.append("")
     lines.append("register\tname\tpool_image_addrs")
     for regval in sorted(used):
         name, addrs = used[regval]
-        lines.append(f"0x{regval:08x}\t{name}\t" + ",".join(f"0x{a:x}" for a in sorted(addrs)))
+        lines.append(
+            f"0x{regval:08x}\t{name}\t"
+            + ",".join(f"0x{a:x}" for a in sorted(addrs))
+        )
     report = "\n".join(lines) + "\n"
     if args.report:
         Path(args.report).write_text(report)

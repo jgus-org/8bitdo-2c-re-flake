@@ -12,17 +12,17 @@ Guard: `flash2c.py` now reads the target's own flash before a full-app flash and
 
 Reads above `0x20000` alias (128 KB chip).
 
-| region | contents |
-|---|---|
-| `0x0–0x6000` | resident bootloader |
-| `0x6000–0x10000` | bank A — active app (`0xA000`) |
-| `0x10000–0x12000` | erased |
-| `0x12000` | OTA descriptor |
-| `0x13000–0x1d000` | bank B — app copy (`== bank A` on stock) |
-| `0x1e000` | `CFG_ADR_CALIBRATION` — per-chip RF/ADC trim |
-| `0x1f000` | anti-clone link-identity signature — per-chip |
+| region            | contents                                      |
+| ----------------- | --------------------------------------------- |
+| `0x0–0x6000`      | resident bootloader                           |
+| `0x6000–0x10000`  | bank A — active app (`0xA000`)                |
+| `0x10000–0x12000` | erased                                        |
+| `0x12000`         | OTA descriptor                                |
+| `0x13000–0x1d000` | bank B — app copy (`== bank A` on stock)      |
+| `0x1e000`         | `CFG_ADR_CALIBRATION` — per-chip RF/ADC trim  |
+| `0x1f000`         | anti-clone link-identity signature — per-chip |
 
-Dual-bank OTA: an app-mode flash writes the *inactive* bank and updates the descriptor; a boot-mode flash writes physical addresses. `bank A == bank B` on stock, so bank B is rebuildable from bank A (or from a matching-version reference).
+Dual-bank OTA: an app-mode flash writes the _inactive_ bank and updates the descriptor; a boot-mode flash writes physical addresses. `bank A == bank B` on stock, so bank B is rebuildable from bank A (or from a matching-version reference).
 
 ## OTA descriptor `@0x12000`
 

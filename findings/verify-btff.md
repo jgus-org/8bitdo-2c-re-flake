@@ -7,12 +7,14 @@ Method note: `listing.txt` does NOT actually carry the `;->[pool]=0xREG` annotat
 ## Per-claim verdicts
 
 ### Claim 1 — Motor driver f93c → PWM4 0x8007a4 / PWM5 0x8007a8, period 10000; fa10 enables via reg_pwm_enable 0x800780 bits 4/5; PWM0 0x800794 = LED. **[VERIFIED 0.9] → CONFIRMED**
+
 - f93c pool words read from image: `0xfa04=0x27100000` (=10000<<16, period), `0xfa08=0x008007a8`, `0xfa0c=0x008007a4`. Store paths traced: arg `channel==0` → store 32-bit `(10000<<16)|(cmp*100)` to **0x8007a8**; `channel==1` → to **0x8007a4** (listing 0xf97e-0xf98c and 0xf9b0-0xf9be). So ch0=PWM5, ch1=PWM4 — matches.
 - Duty curves traced exactly: call `d7c8` (curve select) @0xf9c2; `r0!=0` → `(s*45)/255+13` (0xf9ca: 3s→48s→45s, ÷255 via 0x8504, +0xd); `r0==0` → `(s*80)/255+20` (0xf9e2: 5s→80s, ÷255, +0x14). `s==0` takes the off path @0xf990.
 - fa10 (called from main-loop init @0xa418): `reg_pwm_clk(0x800782)=0x17`; then `reg_pwm_enable(0x800780) |= 0x20` (bit5) and later `|= 0x10` (bit4) — listing 0xfa2c/0xfa48, base reg pool `0xfa60=0x800780` (matches symreport `reg_pwm_enable 0xfa60`). Programs `reg_pwm{4,5}_cycle` (pools 0xfa5c=0x8007a8, 0xfa64=0x8007a4) with 0x27100000.
 - Register identity is consistent with register-map.md (`reg_pwm_cycle(i)/cmp(i)/max(i) @0x794+i*4`: i=4→0x7a4, i=5→0x7a8, i=0→0x794=LED). `poolregs.txt` shows 0x008007a4 ×2, 0x008007a8 ×2, 0x00800794 ×1. reg_pwm_enable/clk are the only PWM regs "named" in symreport (0xfa60/0xfa54) — the cmp/cycle regs are unnamed data pool words, which is expected.
 
 ### Claim 2 — All rumble funnels through fa68 (globals 0x8434ef/f0); applied from main loop via faa0 @0xa43c; callers are USB (f684/eabc) + 2.4G RF (dc58), none BLE. **[VERIFIED 0.85] → CONFIRMED**
+
 - fa68 pool words read from image: writes `motorA(r0)→0x8434ef`, `motorB(r1)→0x8434f0`, `duration(r2)→0x8434f1` (pools 0xfa98/0xfa9c/0xfa94).
 - faa0 (listing 0xfaa0): reads `reg_system_tick 0x800740`, subtracts last-ts `0x8434f4`, rate-limits `> 0x27100` ticks, decrements duration `0x8434f1`, then `f93c(motorA@0x8434ef, 0)` + `f93c(motorB@0x8434f0, 1)`. Called only from `0xa43c` in the shared main loop (0xa430-0xa48c). Verified via `grep 0xfaa0` → single hit.
 - **Complete caller set of fa68** (`grep 0xfa68`): 0xa0f8, 0xa4ae, 0xcf3c/4c/5c/6c/7c/8c, 0xdaa8, 0xdce6, 0xeaf4, 0xf6a8. These are: notification buzzes (a0f8, daa8), disconnect-stop `(0,0,0)` @0xa4ae, pairing/startup pattern SM @0xcf00, RF parser body `FUN_0000dc58` (0xdce6), USB EP parser `FUN_0000eabc` (0xeaf4), USB vendor parser `FUN_0000f684` (0xf6a8). **No ATT/BLE handler is among them.** This is the airtight leg of the Goal-4 argument and it holds.
@@ -20,11 +22,14 @@ Method note: `listing.txt` does NOT actually carry the `;->[pool]=0xREG` annotat
 - Not re-run: the report's "exhaustive pool search" proving 0x8434ef/f0 have no other writer (payload was GC'd mid-session). Structurally consistent; faa0 only reads them.
 
 ### Claim 3 — BLE report map @0x1734c declares rumble OUTPUT: Report ID 5, PID page 0x0F, 4×u8 0-100 @0x173af. **[VERIFIED 0.9] → CONFIRMED**
+
 - Raw bytes @0x173af read from image match byte-for-byte: `05 0f 09 70 85 05 15 00 25 64 75 08 95 04 91 02 c0`.
 - Full HID-item parse of the 116-byte map: Report ID 5, Usage Page 0x0F (PID), Usage 0x70, LogMin 0 / LogMax 100, Size 8, Count 4, **OUTPUT(Data,Var,Abs)**. It is the value of the **0x2A4B Report-Map** attribute (entry @0x1779c, `attrLen=116`, `val*=0x1734c`) — identity nailed by length + UUID. The same map's Report ID 1 input also carries a Generic-Device-Controls battery field (usage-page 6, usage 0x20, LogMax 100), matching the report's aside.
 
 ### Claim 4 — Writable output-report characteristic (idx31/32 @0x17754, props 0x0E, buffer 0x84315c); ATT write-callback @0x17764 is NULL; 0x84315c referenced only in the table. **[VERIFIED 0.8] → CONFIRMED, with two factual corrections**
+
 Full walk of the Telink 24-byte `attribute_t` table (perm@+2, attrLen@+4, uuid*@+8, val*@+12, w@+16, r@+20; layout confirmed by every uuid*/val* resolving correctly and attNum=0 on all mid-table entries):
+
 - Entry **@0x17754**: uuid **0x2A4D** (Report), `perm=0x03` (READ|WRITE), `attrLen=1`, `val*=0x84315c`, **`w=0x00000000`**, `r=0x00000000`. Its characteristic declaration @0x17330 has properties byte **0x0E** (Read|WriteWO|Write) → this is what the report calls "props 0x0E".
 - The write-callback field lives at **0x17764** (= 0x17754+16) and reads **0x00000000** — confirmed. Address is inside the flashed app region (0x6000-0x18400). ✓
 - LE pointer `5c 31 84 00` (0x84315c) occurs **exactly once** in the whole image, at 0x17760 (this entry's val* field). **Zero code xrefs.** The two input-report buffers (0x843148 8B @0x176f4; 0x843170 2B @0x17694) likewise appear only in the table — consistent with a HOGP service that reads/writes attribute buffers exclusively through the SDK's generic ATT handler.
@@ -33,18 +38,22 @@ Full walk of the Telink 24-byte `attribute_t` table (perm@+2, attrLen@+4, uuid*@
 - **Caveat the report understates:** EVERY `.w` and `.r` in the table is NULL, so the per-attribute write-callback path is never exercised anywhere in this firmware. "Null ⇒ default memcpy(pAttrValue,payload)" is standard Telink `att.c` behavior but lives in the closed `libdriver_b80.a` and is not traced in-image.
 
 ### Claim 5 — BT-mode FF is case (ii), declared-but-ignored (not case (i)). **[VERIFIED/INFERRED 0.8] → CONFIRMED**
+
 Two independent lines both hold: (a) a rumble OUTPUT report IS present in the BT map (Claim 3) and a writable output-report characteristic DOES exist (Claim 4), yet its buffer is unread and its callback null; (b) the complete 11-caller set of the motor setter fa68 (Claim 2) contains no BLE code, so no ATT write can reach the motor regardless of the callback question. Leg (b) makes the verdict robust even if leg (a)'s default-handler premise were wrong. Case (ii), not (i).
 
 ### Claim 6 — Charge/power gate is mode-independent (shared main loop; mode byte 0x843470 only selects the rumble curve + minor branches). **[INFERRED 0.7] → STRUCTURALLY SUPPORTED, exact mapping UNPROVEN**
+
 - The main loop 0xa430-0xa48c is a single shared body: it calls the rumble applier faa0 @0xa43c, the mode getter d7c8 @0xa44c (whose r0 gates the 0xa448-0xa452 branch), and the 2.4G command dispatcher `FUN_0000a328` @0xa49e. So the rumble-apply and mode-branch machinery is not duplicated per transport. That much is CONFIRMED from the listing.
 - d7c8 is a 3-instruction byte getter (`ldr r3,[pc,#4]; ldrb r0,[r3]; bx lr`) — structure confirmed. The exact SRAM source **0x843470** could not be re-read (payload GC'd) and is non-load-bearing; the value→mode (2.4G/BT/wired) mapping remains unresolved, as the report itself states.
-- The specific "won't power off while charging" branch was NOT traced in this pass (it belongs to Goal 2/3). Conclusion that BT *inherits* the same charge gate is a reasonable inference from the shared loop, not a traced fact. Keep at ~0.7.
+- The specific "won't power off while charging" branch was NOT traced in this pass (it belongs to Goal 2/3). Conclusion that BT _inherits_ the same charge gate is a reasonable inference from the shared loop, not a traced fact. Keep at ~0.7.
 
 ## Harsh notes on flashing / patch safety (the report leans on these)
+
 - **"No signature, CRC-only" is NOT proven for the CONTROLLER.** Per flashing-options.md the IAP RE is of the **dongle** handler; the controller's resident bootloader (0x0-0x5FFF) is not in our image, so the controller's gate is inferred from the dongle + fwupd `UNSIGNED_PAYLOAD`, and the CRC recipe is admittedly un-extracted (self-rated LOW). Any patch whose final step is "recompute the ebitdo CRC and reflash" rests on an unproven premise for this target. Treat "no signature" as PLAUSIBLE, not established.
 - **Patch Option A (write shim ptr into 0x17764):** target address is in-region (0x6000-0x18400 ✓) and currently 0x00000000 ✓ — both re-verified. But because the whole table's `.w` fields are null and never exercised, whether the closed ATT dispatcher honors a non-null `.w` cannot be shown from the image. Correctly self-caveated; do not treat as known-good.
 - **Patch Option B (poll 0x84315c in main loop):** more robust, but note `attrLen=1` — if the SDK default write caps at attrLen, only motorA (buf[0]) reaches the buffer, so a naive 4-byte poll would read stale bytes for motorB. Option A's shim, reading `value[0]/value[1]` from the ATT packet, sidesteps this.
 - **Shim tail 0x18274-0x18400:** image ends exactly at 0x18400 (74752 B). The 396-byte zero-fill claim could not be re-confirmed (payload GC'd); content extends to at least 0x18135 (`Telink Remote`). Shim placement feasibility partially unverified.
 
 ## Bottom line
+
 No load-bearing FF claim collapsed. Claims 1-3 CONFIRMED against raw bytes; Claim 4 CONFIRMED with two factual corrections (attrLen=1 not 4; "0x0E" is the declaration property byte, value-attr perm is 0x03); Claim 5 CONFIRMED (doubly, via caller-set enumeration); Claim 6 structurally supported but the mode-mapping and the charging branch itself remain UNPROVEN. The weakest links are the patch/flashing premises (controller "no signature" unproven; per-attribute `.w` path never exercised), which the report flags but which deserve heavier discounting.

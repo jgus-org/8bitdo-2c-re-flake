@@ -8,20 +8,20 @@ inputs.bitdo-2c-re.url = "github:jgus-org/8bitdo-2c-re-flake";
 
 ## Outputs
 
-| Output | What you get |
-| --- | --- |
-| `packages.default` (= `ghidra-tc32`) | Ghidra with the Telink TC32 processor module, SLEIGH precompiled, registered through `NIX_GHIDRAHOME`. |
+| Output                                                                      | What you get                                                                                                                                                              |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages.default` (= `ghidra-tc32`)                                        | Ghidra with the Telink TC32 processor module, SLEIGH precompiled, registered through `NIX_GHIDRAHOME`.                                                                    |
 | `packages.fw-ctrl-v109`, `fw-ctrl-v106`, `fw-dongle-v103`, `fw-dongle-v100` | A vendor `.dat` exactly as 8BitDo serves it (ebitdo header intact). `v109`/`v103` are the current builds; `v106`/`v100` are the factory images, kept for version diffing. |
-| `packages.payload-<target>` | The same image minus its 28-byte ebitdo header — the bytes that land at flash address `0x6000`. This is what Ghidra loads and what the flasher writes. |
-| `packages.mod-battery-ctrl-v109` | Controller payload with 0–100 battery level folded into spare button-word bits and the USB product name rebranded to **Ultima+e**. |
-| `packages.mod-batt-l4r4-dongle-v103` | Dongle payload that relays battery level into report byte 18 and L4/R4/Square into byte 19. |
-| `packages.flash-2c` | The flasher, with python + pyusb + libusb wired in: `flash-2c --target ctrl|dongle|boot probe|flash|read|gen`. |
-| `packages.update-all` | `flash-2c` on autopilot: flashes every plugged-in `2dc8` device with the two mods above. |
-| `packages.refetch-firmware` | Ask the vendor API for the currently published build of a device type (75 controller, 76 dongle, 77 wired). |
-| `packages.tc32-tools` | Telink's `tc32-elf-{as,ld,objcopy,objdump}`, patchelf'd for nix. |
-| `devShells.default` | The RE workbench: `ghidra`, `rizin`, `binwalk`, `binutils`, `file`, `ripgrep`, `jq`, `curl`, `python3`, `refetch-firmware`. |
-| `checks.flash-template-ctrl`, `checks.flash-template-dongle` | Regenerate the flash command stream from a stock payload and diff it byte-for-byte against a captured vendor stream. |
-| `nixosModules.xpad-2c-charge` | The host half of the mods, as a NixOS module. |
+| `packages.payload-<target>`                                                 | The same image minus its 28-byte ebitdo header — the bytes that land at flash address `0x6000`. This is what Ghidra loads and what the flasher writes.                    |
+| `packages.mod-battery-ctrl-v109`                                            | Controller payload with 0–100 battery level folded into spare button-word bits and the USB product name rebranded to **Ultima+e**.                                        |
+| `packages.mod-batt-l4r4-dongle-v103`                                        | Dongle payload that relays battery level into report byte 18 and L4/R4/Square into byte 19.                                                                               |
+| `packages.flash-2c`                                                         | The flasher, with python + pyusb + libusb wired in: `flash-2c --target ctrl                                                                                               | dongle | boot probe | flash | read | gen`. |
+| `packages.update-all`                                                       | `flash-2c` on autopilot: flashes every plugged-in `2dc8` device with the two mods above.                                                                                  |
+| `packages.refetch-firmware`                                                 | Ask the vendor API for the currently published build of a device type (75 controller, 76 dongle, 77 wired).                                                               |
+| `packages.tc32-tools`                                                       | Telink's `tc32-elf-{as,ld,objcopy,objdump}`, patchelf'd for nix.                                                                                                          |
+| `devShells.default`                                                         | The RE workbench: `ghidra`, `rizin`, `binwalk`, `binutils`, `file`, `ripgrep`, `jq`, `curl`, `python3`, `refetch-firmware`.                                               |
+| `checks.flash-template-ctrl`, `checks.flash-template-dongle`                | Regenerate the flash command stream from a stock payload and diff it byte-for-byte against a captured vendor stream.                                                      |
+| `nixosModules.xpad-2c-charge`                                               | The host half of the mods, as a NixOS module.                                                                                                                             |
 
 ```bash
 nix build 'github:jgus-org/8bitdo-2c-re-flake#payload-ctrl-v109'

@@ -6,35 +6,17 @@
         "treefmt-nix": "treefmt-nix"
       },
       "locked": {
-        "lastModified": 1792721220,
-        "narHash": "sha256-3v6aTlKeFGQr6ljXJtwc0IjQ43r4vnFTM01WmirFYjo=",
+        "lastModified": 1793074320,
+        "narHash": "sha256-RblR6SOFYZoGzVFU/c6+7JnqT8bs3P6Uh8xm+N7/pc8=",
         "owner": "jgus-org",
         "repo": "flake-lib",
-        "rev": "2975a1a273fb14db079dca568b0a19bf07c09bfa",
+        "rev": "2bade708a3f0881fb4e3de2fe2889f19220b230e",
         "type": "github"
       },
       "original": {
         "owner": "jgus-org",
         "ref": "v1",
         "repo": "flake-lib",
-        "type": "github"
-      }
-    },
-    "flake-utils": {
-      "inputs": {
-        "systems": "systems"
-      },
-      "locked": {
-        "lastModified": 1731533236,
-        "narHash": "sha256-l0KFg5HjrsfsO/JpG+r7fRrqm12kzFHyUHqHCVpMMbI=",
-        "owner": "numtide",
-        "repo": "flake-utils",
-        "rev": "11707dc2f618dd54ca8739b309ec4fc024de578b",
-        "type": "github"
-      },
-      "original": {
-        "owner": "numtide",
-        "repo": "flake-utils",
         "type": "github"
       }
     },
@@ -73,24 +55,8 @@
     "root": {
       "inputs": {
         "flake-lib": "flake-lib",
-        "flake-utils": "flake-utils",
         "nixpkgs": "nixpkgs_2",
         "tc32-ghidra": "tc32-ghidra"
-      }
-    },
-    "systems": {
-      "locked": {
-        "lastModified": 1681028828,
-        "narHash": "sha256-Vy1rq5AaRuLzOxct8nz4T6wlgyUR7zLU309k9mBC768=",
-        "owner": "nix-systems",
-        "repo": "default",
-        "rev": "da67096a3b9bf56a91d16901293e51ba5b49a27e",
-        "type": "github"
-      },
-      "original": {
-        "owner": "nix-systems",
-        "repo": "default",
-        "type": "github"
       }
     },
     "tc32-ghidra": {

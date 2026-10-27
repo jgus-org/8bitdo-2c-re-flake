@@ -3,7 +3,6 @@
 
   inputs = {
     flake-lib.url = "github:jgus-org/flake-lib/v1";
-    flake-utils.url = "github:numtide/flake-utils";
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     tc32-ghidra = {
       flake = false;
@@ -15,14 +14,13 @@
     {
       self,
       flake-lib,
-      flake-utils,
       nixpkgs,
       tc32-ghidra,
     }:
     # One host, deliberately: tc32-tools installs Telink's prebuilt x86-64 tc32-elf binaries and
     # binds them to the build host's own dynamic linker, and mkAsm executes them to assemble every
     # `mod-*` payload, so the production outputs cannot build on any other system.
-    flake-utils.lib.eachSystem [ "x86_64-linux" ] (
+    flake-lib.lib.eachSystem [ "x86_64-linux" ] (
       system:
       let
         pkgs = import nixpkgs { inherit system; };

@@ -47,10 +47,6 @@ Packages, checks and the devshell are published for **x86_64-linux only**. The p
 - `flash-2c` and `update-all` open the USB device directly, which needs root (or an equivalent grant on the device node). Controller in normal mode enumerates as `2dc8:310a`, an idle dongle as `2dc8:301c`, and the resident bootloader as `2dc8:3208` — entered by holding **L1+R1 while plugging in**.
 - The kernel patch is a `boot.kernelPatches` source patch against `drivers/input/joystick/xpad.c`: switching it on rebuilds the host kernel, and it is written against the xpad source of the kernel this flake was developed with.
 
-## Licences
-
-`.dat` images are 8BitDo's own firmware: `fw-*`, `payload-*` and `mod-*` outputs contain vendor code, and the modified payloads are derivative works of it. `dumps/` holds raw flash content read off the hardware. The TC32 binutils are third-party redistributions of Telink's toolchain, fetched as binaries. Nothing here is licensed by this repository — there is no licence file for the scripts, patches and notes in it.
-
 ## Sharp edges
 
 - `update-all` **writes firmware to every plugged-in `2dc8` device**. `--dry-run` prints the plan; controllers already reading `Ultima+e` are skipped unless `--force`, and dongles always re-flash. A bad app image is re-flashable through the `2dc8:3208` bootloader, which survives an app that no longer enumerates; single-wire debug is the last resort for a corrupt bootloader.
@@ -76,3 +72,5 @@ The project directory must already exist. `ReportStats.java` reports loaded bloc
 ## Notes
 
 [findings/FINDINGS.md](findings/FINDINGS.md) is the vetted synthesis of what the firmware does (charging gate, extra buttons, force feedback, flashing). [NOTES.md](NOTES.md) is the running RE log and the protocol detail behind the flasher, [flasher/README.md](flasher/README.md) its command reference, and `scripts/` the headless Ghidra analysis pipeline.
+
+See [LICENSE.md](LICENSE.md) for licensing and copyright, and [NOTICE.md](NOTICE.md) for the terms of upstream and distributed artifacts.

@@ -263,13 +263,13 @@
             install -m0755 ${tool "objcopy" "sha256-xa8ZUzRV+6XyOxveznOvRhITqQrJLW2xJQFz1XQoOps="} $out/bin/tc32-elf-objcopy
             install -m0755 ${tool "objdump" "sha256-j1x4eaMrgkdXFNnO+Pv3v5TYpoWzd8o8B9yfYZNxP48="} $out/bin/tc32-elf-objdump
             for f in $out/bin/*; do
-              patchelf --set-interpreter "$(cat ${pkgs.stdenv.cc}/nix-support/dynamic-linker)" \
-                --set-rpath "${
-                  lib.makeLibraryPath [
-                    pkgs.zlib
-                    pkgs.glibc
-                  ]
-                }" "$f"
+              patchelf --set-rpath "${
+                lib.makeLibraryPath [
+                  pkgs.zlib
+                  pkgs.glibc
+                ]
+              }" "$f"
+              patchelf --set-interpreter "$(cat ${pkgs.stdenv.cc}/nix-support/dynamic-linker)" "$f"
             done
           '';
 

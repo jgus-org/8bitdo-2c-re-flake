@@ -2,8 +2,11 @@
   description = "Reverse-engineering workbench for 8BitDo Ultimate 2C controller + 2.4GHz dongle firmware (Telink TC32). Pins the vendor firmware images as fixed-output derivations, extracts the ebitdo payloads, assembles the patched payloads, and provides Ghidra with the TC32 processor module plus supporting tools.";
 
   inputs = {
-    flake-lib.url = "github:jgus-org/flake-lib/v1";
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
+    flake-lib = {
+      inputs.nixpkgs.follows = "nixpkgs";
+      url = "github:jgus-org/flake-lib/v1";
+    };
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     tc32-ghidra = {
       flake = false;
       url = "github:trust1995/Ghidra_TELink_TC32/f466dac5f746ac65d57dbbf8eb534988e1076f53";
